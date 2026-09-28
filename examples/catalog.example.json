@@ -1,0 +1,35 @@
+{
+  "updated": "2026-09-28",
+  "originals": {},
+  "rules": "这是结构示例，不代表真实招聘信息。",
+  "jobs": [
+    {
+      "key": "example-support-role",
+      "aliases": ["example-support-role"],
+      "company": "示例公司（演示）",
+      "role": "技术支持助理（示例）",
+      "group": "技术支持",
+      "direct": false,
+      "channel": "unverified",
+      "apply_url": "",
+      "source": "",
+      "entry": "",
+      "place": "待填写",
+      "salary": "待核实",
+      "deadline": "待填写",
+      "online": "面试方式待核实",
+      "duties": ["在这里填写岗位职责"],
+      "requirements": ["在这里填写学历、技能和届别要求"],
+      "match": "待评估",
+      "confidence": "示例",
+      "strengths": ["用真实经历说明匹配理由"],
+      "gaps": ["记录尚未满足或尚未确认的条件"],
+      "notes": "示例条目不会显示为可直接申请的真实职位。",
+      "base": "未指定",
+      "variant": null,
+      "resume": {"base": "未指定", "path": "", "before": "", "after": ""},
+      "change_note": "待准备",
+      "verified_on": "待核实"
+    }
+  ]
+}
