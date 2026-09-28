@@ -352,9 +352,15 @@ class Assistant:
         if not self.busy.acquire(blocking=False): raise ValueError('推荐正在生成，请完成后再微调简历')
         try:
             s=self.settings()
-            if not s['profile'].strip(): raise ValueError('请先在设置中导入简历正文')
-            job=next((j for j in self.store.read('岗位库.json')['jobs'] if j['key']==key),None)
+            catalog=self.store.read('岗位库.json')
+            job=next((j for j in catalog['jobs'] if j['key']==key),None)
             if not job: raise ValueError('岗位不存在')
+            # Start from the recommended archived baseline when available, avoiding chains of edits.
+            base=catalog.get('originals',{}).get(job.get('base',''),{})
+            source_path=base.get('path') or job.get('resume',{}).get('path') or s['resume_path']
+            source_text=self.extract_resume(source_path) if source_path else s['profile']
+            if not source_text.strip(): raise ValueError('请先在设置中导入简历正文')
+            s={**s,'profile':source_text,'resume_path':source_path}
             result=ai_json(s['model'], '为岗位提出最多3处小幅措辞调整，只能重写原文中已有的项目、职责或技能描述。禁止改姓名、电话、邮件、生日、学校、学历、时间、数字，禁止新增技能和经历。保持段落顺序与结构。输出{"edits":[{"before":"连续原文","after":"微调措辞","reason":"根据哪条岗位要求"}]}，before必须是原文中唯一出现的片段。',{'resume':s['profile'],'job':{k:job.get(k) for k in ('company','role','requirements','duties')}})
             edits=validate_edits(s['profile'],result.get('edits'))
             if not edits: raise ValueError('没有通过校验的小幅修改；可直接使用原简历')
