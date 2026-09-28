@@ -62,6 +62,22 @@ class RecommendationTests(unittest.TestCase):
         self.assertEqual(self.store.read(rec.DRAFTS)['items'][0]['source_text'],source)
     def test_resume_path_cannot_escape(self):
         with self.assertRaises(ValueError): self.engine.resume_file('../../secret.txt')
+    def test_tailoring_uses_recommended_baseline_not_unrelated_profile(self):
+        job=self.add()
+        folder=self.store.root/'resumes';folder.mkdir()
+        original='负责项目文档整理并协助团队沟通。'
+        (folder/'base.txt').write_text(original,encoding='utf-8')
+        catalog=self.store.read(app.CATALOG)
+        catalog['jobs'][0]['base']='support'
+        catalog['originals']={'support':{'path':'resumes/base.txt'}}
+        self.store.write(app.CATALOG,catalog)
+        self.engine.save_settings({'profile':'An unrelated resume'})
+        edits=[{'before':original,'after':'整理项目文档，协助团队沟通。','reason':'强调文档支持'}]
+        with patch('recommendations.ai_json',return_value={'edits':edits}) as ai:
+            draft=self.engine.draft(job['key'])
+        self.assertEqual(ai.call_args.args[2]['resume'],original)
+        self.assertEqual(draft['source_path'],'resumes/base.txt')
+        self.assertTrue(draft['source_sha256'])
     def test_network_error_keeps_candidates(self):
         self.add();self.engine.save_settings({'search_enabled':True})
         with patch('recommendations.search_public',side_effect=OSError('offline')):
