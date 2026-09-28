@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 import webbrowser
+from recommendations import Assistant
 
 BASE = Path(__file__).resolve().parent
 TZ = timezone(timedelta(hours=8))
@@ -226,6 +227,7 @@ class Server(ThreadingHTTPServer):
 
     def __init__(self, directory, port=18728):
         self.store = Store(directory)
+        self.assistant = Assistant(self.store, today, same_job)
         self.token = secrets.token_urlsafe(32)
         super().__init__(('127.0.0.1', port), Handler)
 
@@ -256,13 +258,19 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path)
         store = self.server.store
         if path == '/health':
-            return self.send({'app': 'autumn-job-tracker', 'version': '1.0.0', 'data_dir': str(store.root)})
+            return self.send({'app': 'autumn-job-tracker', 'version': '1.1.0', 'data_dir': str(store.root)})
+        if path == '/api/assistant':
+            return self.send(self.server.assistant.status())
+        if path == '/api/assistant/model':
+            return self.send(self.server.assistant.model_status())
         if path == '/api/state':
             with store.lock:
                 return self.send({'catalog': store.read(CATALOG), 'ledger': store.read(LEDGER),
                     'token': self.server.token, 'today': today().isoformat(), 'data_dir': str(store.root)})
         if path == '/':
             return self.send((BASE / 'web' / 'index.html').read_bytes(), mime='text/html; charset=utf-8')
+        if path == '/assistant.js':
+            return self.send((BASE / 'web' / 'assistant.js').read_bytes(), mime='text/javascript; charset=utf-8')
         if path in ('/api/export/ledger', '/' + LEDGER, '/api/export/catalog'):
             with store.lock:
                 return self.send(store.read(CATALOG if path.endswith('catalog') else LEDGER))
@@ -277,20 +285,32 @@ class Handler(BaseHTTPRequestHandler):
         port = self.server.server_port
         if not self.host_ok() or self.headers.get('Origin') not in (f'http://127.0.0.1:{port}', f'http://localhost:{port}') or not secrets.compare_digest(self.headers.get('X-Tracker-Token', ''), self.server.token):
             return self.send({'error': '请从本机看板操作'}, 403)
-        if urlparse(self.path).path != '/api/change':
+        endpoint = urlparse(self.path).path
+        if endpoint not in ('/api/change', '/api/assistant'):
             return self.send({'error': 'Not found'}, 404)
         try:
             n = int(self.headers.get('Content-Length', '0'))
             if not 0 < n <= 8_000_000:
                 raise ValueError('请求内容为空或超过8MB')
             p = json.loads(self.rfile.read(n))
+            if endpoint == '/api/assistant':
+                engine = self.server.assistant
+                op = p.get('op')
+                if op == 'settings': result = {'settings': engine.save_settings(p)}
+                elif op == 'generate': result = engine.start(force=True)
+                elif op == 'extract': result = {'text': engine.extract_resume(p.get('path', ''))}
+                elif op == 'draft': result = {'draft': engine.draft(p.get('key'))}
+                elif op == 'apply_draft': result = engine.apply_draft(p.get('id'))
+                elif op == 'apply_pdf': result = engine.apply_pdf(p.get('id'))
+                else: raise ValueError('未知AI操作')
+                return self.send(result)
             with self.server.store.lock:
                 result = self.server.store.change(p)
                 self.send({**result, 'ledger': self.server.store.read(LEDGER), 'catalog': self.server.store.read(CATALOG)})
         except (ValueError, TypeError, KeyError) as e:
             self.send({'error': str(e)}, 400)
         except OSError:
-            self.send({'error': '文件写入失败，请检查数据目录权限'}, 500)
+            self.send({'error': '本地模型未就绪或连接中断，请查看AI设置' if endpoint == '/api/assistant' else '文件写入失败，请检查数据目录权限'}, 500)
 
 
 def main():
@@ -314,11 +334,13 @@ def main():
     print(f'Autumn Job Tracker: {url}\nData: {server.store.root}\nCtrl+C to stop.', flush=True)
     if args.open:
         webbrowser.open(url)
+    threading.Thread(target=server.assistant.scheduler, daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        server.assistant.stop.set()
         server.server_close()
 
 

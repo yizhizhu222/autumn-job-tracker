@@ -24,3 +24,10 @@ venv/
 **/原版简历/
 **/简历定制/
 **/resumes/
+
+**/assistant-settings.json
+**/daily-recommendations.json
+**/recommendation-history.json
+**/resume-drafts.json
+/runtime/
+/models/
