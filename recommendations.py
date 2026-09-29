@@ -184,11 +184,27 @@ class Assistant:
     def status(self):
         with self.state_lock: progress = dict(self.progress)
         report = self.read(DAILY, {'date': '', 'items': [], 'message': '正在准备今日推荐'})
-        applied = self.store.read('投递记录.json')['applications'].values()
-        prefs = self.preferences.read()
-        report['items'] = [j for j in report['items'] if self.preferences.allowed(j,prefs) and not any(self.same_job(j, a) for a in applied)]
+        report['items'] = self.pending_jobs(report['items'])
+        report['visible_count'] = len(report['items'])
         return {'settings': self.settings(), 'report': report, 'progress': progress,
                 'drafts': self.read(DRAFTS, {'items': []})['items']}
+
+    def pending_jobs(self, candidates=None):
+        """Use live marks for every queue, including cached reports and aliases."""
+        with self.store.lock:
+            catalog = self.store.read('岗位库.json')['jobs']
+            applied = list(self.store.read('投递记录.json')['applications'].values())
+            prefs = self.preferences.read()
+            result = []
+            for job in catalog if candidates is None else candidates:
+                current = next((j for j in catalog if j['key']==job.get('key')), None)
+                if current is None:
+                    current = next((j for j in catalog if self.same_job(j,job)), None)
+                if current is None or not self.preferences.allowed(current,prefs): continue
+                if any(self.same_job(current,a) or self.same_job(job,a) for a in applied): continue
+                if any(self.same_job(current,j) for j in result): continue
+                result.append({**job, 'key':current['key'], 'aliases':current.get('aliases',[])})
+            return result
 
     def model_status(self):
         try:
@@ -200,14 +216,8 @@ class Assistant:
     def career_status(self):
         plan = self.read(career.FILE, None)
         if plan:
-            applied = list(self.store.read('投递记录.json')['applications'].values())
-            catalog = {j['key']: j for j in self.store.read('岗位库.json')['jobs']}
-            prefs = self.preferences.read()
-            def allowed(j):
-                actual = catalog.get(j['key'])
-                return actual is not None and self.preferences.allowed(actual,prefs) and not any(self.same_job(actual,a) for a in applied)
-            plan['current_jobs'] = [j for j in plan['current_jobs'] if allowed(j)]
-            for p in plan['projects']: p['jobs_after'] = [j for j in p['jobs_after'] if allowed(j)]
+            plan['current_jobs'] = self.pending_jobs(plan['current_jobs'])
+            for p in plan['projects']: p['jobs_after'] = self.pending_jobs(p['jobs_after'])
         with self.state_lock: progress = dict(self.career_progress)
         return {'plan': plan, 'progress': progress}
 
@@ -396,6 +406,8 @@ class Assistant:
                 'empty_reason':'现有候选均已投或未核实到具体岗位，请稍后重试联网更新；不会生成虚构岗位。' if not selected else ''}
             with self.store.lock:
                 current=self.store.read('岗位库.json')
+                selected=self.pending_jobs(selected)
+                report['items']=selected
                 chosen={j['key']:j for j in selected}
                 for job in current['jobs']:
                     if job['key'] in chosen:

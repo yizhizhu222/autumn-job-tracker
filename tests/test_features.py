@@ -77,6 +77,29 @@ class FeatureTests(unittest.TestCase):
         j=self.add();self.store.write(career.FILE,career.build_plan('数据科学','SQL',[j]))
         self.prefs.change({'op':'exclude','kind':'job','key':j['key']})
         self.assertEqual(self.engine.career_status()['plan']['current_jobs'],[])
+
+    def test_cached_aliases_never_return_after_mark_or_restart(self):
+        j=self.add()
+        duplicate=dict(j,key='other-platform',aliases=[j['key']])
+        catalog=self.store.read(app.CATALOG);catalog['jobs'].append(duplicate);self.store.write(app.CATALOG,catalog)
+        self.store.write(recommendations.DAILY,{'items':[j,duplicate]})
+        self.store.write(career.FILE,career.build_plan('数据科学','',[j,duplicate]))
+        self.assertEqual(len(self.engine.pending_jobs()),1)
+        self.store.change({'op':'mark','key':j['key'],'evidence':'真实提交成功'})
+        for progress in ('等待回复','拒绝','撤回'):
+            self.store.change({'op':'update','key':j['key'],'progress':progress})
+            restarted=recommendations.Assistant(app.Store(self.temp.name),lambda:date(2026,9,30),app.same_job)
+            self.assertEqual(restarted.pending_jobs(),[])
+            self.assertEqual(restarted.status()['report']['items'],[])
+            plan=restarted.career_status()['plan']
+            self.assertEqual(plan['current_jobs'],[])
+            self.assertTrue(all(not p['jobs_after'] for p in plan['projects']))
+
+    def test_stale_report_uses_current_platform_preferences(self):
+        j=self.add();old=dict(j,apply_url='https://old.example/job')
+        self.store.write(recommendations.DAILY,{'items':[old]})
+        self.prefs.change({'op':'exclude','kind':'platform','key':j['key']})
+        self.assertEqual(self.engine.status()['report']['items'],[])
     def test_startup_unsupported_and_failed_change_does_not_claim_success(self):
         s=Startup(Path(self.temp.name),18728,Path(self.temp.name))
         with patch('startup.sys.platform','linux'):

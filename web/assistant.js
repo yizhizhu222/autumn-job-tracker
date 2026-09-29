@@ -11,20 +11,15 @@ async function refreshAssistant(){
   } catch { if($('#aiStatus'))$('#aiStatus').textContent='推荐服务未连接'; }
 }
 function renderRecommendations(){
-  const r=assistantState?.report, p=assistantState?.progress;
-  $('#intro').innerHTML='<section class="panel"><div class="row"><div><h2 style="margin-top:0">今日公司推荐</h2><p>优先量子行业，其次少编程与专业相关岗位。低匹配和待确认的机会也会保留，已投岗位自动排除。</p></div><div class="actions"><button class="primary" id="generateDaily">立即更新推荐</button><button id="aiSettings">本地 AI 设置</button></div></div><div id="aiStatus" class="small muted"></div></section>';
-  $('#aiStatus').textContent=p?.running?p.message:(r?`${r.date||'尚未生成'} · ${r.message||''}`:'正在读取今日推荐');
-  $('#generateDaily').disabled=!!p?.running||!connected;
-  $('#generateDaily').onclick=async()=>{try{await assistantCall({op:'generate'});await refreshAssistant();}catch(e){alert(e.message);}};
-  $('#aiSettings').onclick=openAISettings;
-  if(!r){$('#content').innerHTML='<div class="empty">正在读取推荐…</div>';return;}
-  let html=(r.date&&r.date!==today?'<p class="warning">这里是上次推荐，今日更新尚未完成。</p>':'')+(r.errors||[]).map(e=>'<p class="small muted">'+esc(e)+'</p>').join('');
-  const items=(r.items||[]).filter(j=>availableJob(j)&&commonFilter(j));
-  for(const tier of ['优先投递','可以尝试','待确认']){
-    const group=items.filter(j=>j.tier===tier); if(!group.length)continue;
-    html+=`<h2>${tier} · ${group.length}</h2>`+group.map(j=>`<div class="box small"><b>${esc(j.recommendation_origin)}</b> · ${esc(j.application_mode)}<br>${esc(j.application_note)}${list(j.recommendation_warnings)}${j.resume_reason?'<p>简历建议：'+esc(j.resume_reason)+'</p>':''}<button data-ai="${esc(j.key)}">本地 AI 微调简历</button></div>`+jobCard(j)).join('');
-  }
-  $('#content').innerHTML=html+(items.length?'':`<div class="empty">${esc(r.empty_reason||'当前筛选下没有岗位；清除筛选或更新推荐。')}</div>`);
+ const r=assistantState?.report,p=assistantState?.progress;
+ const items=(r?.items||[]).filter(j=>availableJob(j)&&commonFilter(j));
+ $('#intro').innerHTML=`<section class="page-intro"><div class="row"><div><h2>为你精选 <span class="tag gray">${items.length} 个机会</span></h2><p id="aiStatus">${esc(p?.running?p.message:'已排除已投递与不感兴趣的岗位')}</p></div><div class="actions"><button id="generateDaily" ${p?.running||!connected?'disabled':''}>更新推荐</button><button id="aiSettings" class="quiet">AI 设置</button></div></div></section>`;
+ $('#generateDaily').onclick=async()=>{try{await assistantCall({op:'generate'});await refreshAssistant();}catch(e){alert(e.message);}};$('#aiSettings').onclick=openAISettings;
+ if(!r){$('#content').innerHTML='<div class="empty">正在准备推荐…</div>';return;}
+ let html=r.date&&r.date!==today?'<p class="small muted">显示上次推荐，等待今日更新。</p>':'';
+ if(r.errors?.length)html+=`<details class="small" data-detail="recommend-errors"><summary>更新说明 · ${r.errors.length} 项</summary>${list(r.errors)}</details>`;
+ for(const tier of ['优先投递','可以尝试','待确认']){const group=items.filter(j=>j.tier===tier);if(group.length)html+=`<div class="section-label">${tier}<span>${group.length}</span></div>`+group.map(jobCard).join('');}
+ $('#content').innerHTML=html+(items.length?'':'<div class="empty">这批机会已处理完，或不符合当前筛选。<br><span class="small">可以更新推荐，继续发现新的岗位。</span></div>');
 }
 async function openAISettings(){
   await refreshAssistant();
@@ -48,7 +43,4 @@ async function createResumeDraft(key,button){
     modal.showModal();$('#savePdf').disabled=!d.draft.source_path?.toLowerCase().endsWith('.pdf');$('#savePdf').onclick=async()=>{try{const saved=await assistantCall({op:'apply_pdf',id:d.draft.id});$('#draftResult').innerHTML=`<p>${esc(saved.message)}</p><a class="button" target="_blank" href="${pathlink(saved.path)}">预览微调PDF</a> <a download href="${pathlink(saved.path)}">下载</a>`;await load();}catch(e){$('#draftResult').textContent=e.message;}};$('#closeDraft').onclick=()=>modal.close();$('#saveDraft').onclick=async()=>{try{const saved=await assistantCall({op:'apply_draft',id:d.draft.id});$('#draftResult').innerHTML=`<p>${esc(saved.message)}</p><a class="button" download href="${pathlink(saved.path)}">下载微调正文</a>`;}catch(e){$('#draftResult').textContent=e.message;}};
   }catch(e){alert(e.message);}finally{button.disabled=false;button.textContent='本地 AI 微调简历';}
 }
-document.querySelector('#content').addEventListener('click',e=>{const b=e.target.closest('[data-ai]');if(b)createResumeDraft(b.dataset.ai,b);});
-refreshAssistant();
-
-setInterval(()=>{if(!document.hidden&&!assistantPoll)refreshAssistant();},30000);
+document.body.addEventListener('click',e=>{const b=e.target.closest('[data-ai]');if(b)createResumeDraft(b.dataset.ai,b);});

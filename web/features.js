@@ -1,7 +1,7 @@
 let careerState=null, careerPoll=null;
 async function featureCall(path,payload){
   const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Tracker-Token':token},body:JSON.stringify(payload)});
-  const d=await r.json();if(!r.ok)throw Error(d.error||'操作失败');return d;
+  const d=await r.json();if(!r.ok)throw Error(d.error||'操作失败');loadSequence++;lastStateSignature='';signalChange();return d;
 }
 function featureModal(title,html){
   let m=$('#featureModal');if(!m){m=document.createElement('dialog');m.id='featureModal';document.body.append(m);}
@@ -40,13 +40,13 @@ function renderExclusions(){
   $('#addRoleRule').onclick=()=>{const m=featureModal('排除岗位类型','<form id="roleRuleForm"><label>岗位名称中包含<input name="value" required placeholder="例如：电话销售"></label><label>原因<textarea name="reason"></textarea></label><button class="primary">记录偏好</button></form>');$('#roleRuleForm').onsubmit=async e=>{e.preventDefault();try{await featureCall('/api/preferences',{op:'exclude',kind:'role',...Object.fromEntries(new FormData(e.target))});m.close();await load();await refreshAssistant();await refreshCareer();}catch(err){$('#featureError').textContent=err.message;}};};
 }
 async function refreshCareer(){
-  try{careerState=await (await fetch('/api/career')).json();if(tab==='career')renderCareer();
+  try{careerState=await (await fetch('/api/career')).json();if(tab==='career')render();
     if(careerState.progress.running&&!careerPoll)careerPoll=setInterval(refreshCareer,4000);
     if(!careerState.progress.running&&careerPoll){clearInterval(careerPoll);careerPoll=null;}
   }catch{if(tab==='career')$('#content').textContent='简历分析服务未连接';}
 }
 function careerJob(j,after=false){
-  return `<div class="box"><b>${esc(j.company)} · ${esc(j.role)}</b><p class="small muted">${esc(j.place)}</p><p>简历已提及：${esc(j.matched.join('、')||'暂无对应证据')}</p>${after?`<p class="ok">完成并验收项目后可补充：${esc(j.gained.join('、'))}</p>`:''}<p>当前缺少明确证据：${esc(j.missing.join('、')||'仍需核实熟练度及业务经验')}</p>${list(j.hard_conditions)}<details><summary>核对原JD证据及资格</summary>${Object.entries(j.evidence).map(([k,v])=>`<p><b>${esc(k)}</b>：${esc(v)}</p>`).join('')}${list(j.unknown)}<p>${esc(j.basis)}</p></details><button data-inspect="${esc(j.key)}">查看完整岗位与推荐简历</button> ${safeUrl(j.url)!=='#'?`<a class="button" href="${esc(safeUrl(j.url))}" target="_blank" rel="noreferrer">${j.direct&&j.channel!=='email'?'打开岗位网页':'查看来源（入口待核实）'}</a>`:''}</div>`;
+  if(!availableJob(j))return '';return `<details class="box" data-detail="career-${after?'after':'now'}-${esc(j.key)}"><summary>${esc(j.company)} · ${esc(j.role)}</summary><b>${esc(j.company)} · ${esc(j.role)}</b><p class="small muted">${esc(j.place)}</p><p>简历已提及：${esc(j.matched.join('、')||'暂无对应证据')}</p>${after?`<p class="ok">完成并验收项目后可补充：${esc(j.gained.join('、'))}</p>`:''}<p>当前缺少明确证据：${esc(j.missing.join('、')||'仍需核实熟练度及业务经验')}</p>${list(j.hard_conditions)}<details><summary>核对原JD证据及资格</summary>${Object.entries(j.evidence).map(([k,v])=>`<p><b>${esc(k)}</b>：${esc(v)}</p>`).join('')}${list(j.unknown)}<p>${esc(j.basis)}</p></details><button data-inspect="${esc(j.key)}">查看完整岗位与推荐简历</button> ${safeUrl(j.url)!=='#'?`<a class="button" href="${esc(safeUrl(j.url))}" target="_blank" rel="noreferrer">${j.direct&&j.channel!=='email'?'打开岗位网页':'查看来源（入口待核实）'}</a>`:''}</details>`;
 }
 function renderCareer(){
   const p=careerState?.plan,progress=careerState?.progress;
@@ -58,7 +58,7 @@ function renderCareer(){
   h+='<h2>现在可以尝试 / 继续核实</h2><p class="small muted">按已提及技能和条件缺口排序；低匹配保留供探索，不能据此认定满足资格。</p>'+(p.current_jobs.map(j=>careerJob(j)).join('')||'<p>当前没有可展示的真实岗位；保留项目方案，继续更新岗位库。</p>');
   h+='<h2>建议先完成的项目</h2>';
   for(const project of p.projects){
-    h+=`<article class="card"><span class="tag">${esc({planned:'待开始',working:'进行中',completed:'本人登记已验收'}[project.status])}</span><h3>${esc(project.title)}</h3><p>${esc(project.duration)}</p><p><b>要解决的问题：</b>${esc(project.problem)}</p><p><b>数据与环境：</b>${esc(project.data)}</p><p>${esc(project.selection_reason)}</p><p class="small muted">覆盖${project.covered_jobs}条岗位 / ${project.covered_companies}家公司；分母${project.sample_size}条本地JD。计数为分析时快照，排除偏好变化后可重新分析。</p><div class="columns"><div><b>实施步骤</b>${list(project.steps)}<b>最终交付物</b>${list(project.deliverables)}</div><div><b>验收标准</b>${list(project.acceptance)}<p><b>通用岗位方向：</b>${esc(project.roles.join('、'))}（方向示例，不表示当前有招聘）</p></div></div><button data-project="${esc(project.id)}">记录项目进度与验收依据</button>${project.completion_evidence?`<p>${esc(project.completion_evidence)}</p>`:''}<details><summary>完成后可争取的真实岗位（${project.jobs_after.length}条示例）</summary><p class="warning small">仅在确实完成并能展示成果后，才能把相关经历写入简历。未补齐的硬条件仍然有效。</p>${project.jobs_after.map(j=>careerJob(j,true)).join('')||'<p>当前岗位库没有可证实的新增技能匹配；上方为通用方向，需继续收集JD。</p>'}</details></article>`;
+    h+=`<details class="card career-project" data-detail="project-${esc(project.id)}"><summary>${esc(project.title)}</summary><span class="tag">${esc({planned:'待开始',working:'进行中',completed:'本人登记已验收'}[project.status])}</span><h3>${esc(project.title)}</h3><p>${esc(project.duration)}</p><p><b>要解决的问题：</b>${esc(project.problem)}</p><p><b>数据与环境：</b>${esc(project.data)}</p><p>${esc(project.selection_reason)}</p><p class="small muted">覆盖${project.covered_jobs}条岗位 / ${project.covered_companies}家公司；分母${project.sample_size}条本地JD。计数为分析时快照，排除偏好变化后可重新分析。</p><div class="columns"><div><b>实施步骤</b>${list(project.steps)}<b>最终交付物</b>${list(project.deliverables)}</div><div><b>验收标准</b>${list(project.acceptance)}<p><b>通用岗位方向：</b>${esc(project.roles.join('、'))}（方向示例，不表示当前有招聘）</p></div></div><button data-project="${esc(project.id)}">记录项目进度与验收依据</button>${project.completion_evidence?`<p>${esc(project.completion_evidence)}</p>`:''}<details><summary>完成后可争取的真实岗位（${project.jobs_after.length}条示例）</summary><p class="warning small">仅在确实完成并能展示成果后，才能把相关经历写入简历。未补齐的硬条件仍然有效。</p>${project.jobs_after.map(j=>careerJob(j,true)).join('')||'<p>当前岗位库没有可证实的新增技能匹配；上方为通用方向，需继续收集JD。</p>'}</details></details>`;
   }
   $('#content').innerHTML=h;
 }
@@ -84,4 +84,3 @@ $('#content').addEventListener('click',async e=>{const b=e.target.closest('butto
   if(b.dataset.inspect){const j=catalog.jobs.find(x=>x.key===b.dataset.inspect);if(j)featureModal('岗位详情',jobCard(j));}
 });
 document.body.addEventListener('click',e=>{if(e.target.closest('#featureModal')){const b=e.target.closest('[data-mark]');if(b){$('#featureModal').close();openForm('mark',b.dataset.mark);}const x=e.target.closest('[data-exclude]');if(x){$('#featureModal').close();openExclude(x.dataset.exclude);}}});
-refreshCareer();

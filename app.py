@@ -261,7 +261,7 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path)
         store = self.server.store
         if path == '/health':
-            return self.send({'app': 'autumn-job-tracker', 'version': '1.2.0', 'data_dir': str(store.root)})
+            return self.send({'app': 'autumn-job-tracker', 'version': '1.3.0', 'data_dir': str(store.root)})
         if path == '/api/startup':
             return self.send(self.server.startup.status())
         if path == '/api/career':
@@ -276,7 +276,7 @@ class Handler(BaseHTTPRequestHandler):
                     'token': self.server.token, 'today': today().isoformat(), 'data_dir': str(store.root),
                     'preferences':self.server.assistant.preferences.read(), 'regions':REGIONS,
                     'excluded_keys':[j['key'] for j in store.read(CATALOG)['jobs'] if self.server.assistant.preferences.excluded(j)],
-                    'allowed_keys':[j['key'] for j in store.read(CATALOG)['jobs'] if self.server.assistant.preferences.allowed(j)]})
+                    'allowed_keys':[j['key'] for j in self.server.assistant.pending_jobs()]})
         if path == '/':
             return self.send((BASE / 'web' / 'index.html').read_bytes(), mime='text/html; charset=utf-8')
         if path == '/assistant.js':

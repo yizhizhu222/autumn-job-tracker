@@ -10,7 +10,7 @@ FILES = ['preferences.py', 'career.py', 'startup.py', 'web/features.js', 'tests/
 
 
 def build():
-    target = ROOT / 'dist' / 'autumn-job-tracker-v1.2.0.zip'
+    target = ROOT / 'dist' / 'autumn-job-tracker-v1.3.0.zip'
     target.parent.mkdir(exist_ok=True)
     with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as z:
         for name in FILES:
