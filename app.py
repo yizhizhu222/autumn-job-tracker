@@ -15,6 +15,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 import webbrowser
 from recommendations import Assistant
+from preferences import REGIONS
+from startup import Startup
 
 BASE = Path(__file__).resolve().parent
 TZ = timezone(timedelta(hours=8))
@@ -230,6 +232,7 @@ class Server(ThreadingHTTPServer):
         self.assistant = Assistant(self.store, today, same_job)
         self.token = secrets.token_urlsafe(32)
         super().__init__(('127.0.0.1', port), Handler)
+        self.startup = Startup(directory, self.server_port, BASE)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -258,7 +261,11 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path)
         store = self.server.store
         if path == '/health':
-            return self.send({'app': 'autumn-job-tracker', 'version': '1.1.0', 'data_dir': str(store.root)})
+            return self.send({'app': 'autumn-job-tracker', 'version': '1.2.0', 'data_dir': str(store.root)})
+        if path == '/api/startup':
+            return self.send(self.server.startup.status())
+        if path == '/api/career':
+            return self.send(self.server.assistant.career_status())
         if path == '/api/assistant':
             return self.send(self.server.assistant.status())
         if path == '/api/assistant/model':
@@ -266,11 +273,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/state':
             with store.lock:
                 return self.send({'catalog': store.read(CATALOG), 'ledger': store.read(LEDGER),
-                    'token': self.server.token, 'today': today().isoformat(), 'data_dir': str(store.root)})
+                    'token': self.server.token, 'today': today().isoformat(), 'data_dir': str(store.root),
+                    'preferences':self.server.assistant.preferences.read(), 'regions':REGIONS,
+                    'excluded_keys':[j['key'] for j in store.read(CATALOG)['jobs'] if self.server.assistant.preferences.excluded(j)],
+                    'allowed_keys':[j['key'] for j in store.read(CATALOG)['jobs'] if self.server.assistant.preferences.allowed(j)]})
         if path == '/':
             return self.send((BASE / 'web' / 'index.html').read_bytes(), mime='text/html; charset=utf-8')
         if path == '/assistant.js':
             return self.send((BASE / 'web' / 'assistant.js').read_bytes(), mime='text/javascript; charset=utf-8')
+        if path == '/features.js':
+            return self.send((BASE / 'web' / 'features.js').read_bytes(), mime='text/javascript; charset=utf-8')
         if path in ('/api/export/ledger', '/' + LEDGER, '/api/export/catalog'):
             with store.lock:
                 return self.send(store.read(CATALOG if path.endswith('catalog') else LEDGER))
@@ -286,13 +298,21 @@ class Handler(BaseHTTPRequestHandler):
         if not self.host_ok() or self.headers.get('Origin') not in (f'http://127.0.0.1:{port}', f'http://localhost:{port}') or not secrets.compare_digest(self.headers.get('X-Tracker-Token', ''), self.server.token):
             return self.send({'error': '请从本机看板操作'}, 403)
         endpoint = urlparse(self.path).path
-        if endpoint not in ('/api/change', '/api/assistant'):
+        if endpoint not in ('/api/change', '/api/assistant', '/api/preferences', '/api/startup', '/api/career'):
             return self.send({'error': 'Not found'}, 404)
         try:
             n = int(self.headers.get('Content-Length', '0'))
             if not 0 < n <= 8_000_000:
                 raise ValueError('请求内容为空或超过8MB')
             p = json.loads(self.rfile.read(n))
+            if not isinstance(p,dict): raise ValueError('请求必须是对象')
+            if endpoint == '/api/preferences': return self.send(self.server.assistant.preferences.change(p))
+            if endpoint == '/api/startup': return self.send(self.server.startup.set(p.get('enabled')))
+            if endpoint == '/api/career':
+                engine=self.server.assistant
+                if p.get('op')=='analyze': return self.send(engine.analyze_career(p))
+                if p.get('op')=='progress': return self.send(engine.project_progress(p))
+                raise ValueError('未知分析操作')
             if endpoint == '/api/assistant':
                 engine = self.server.assistant
                 op = p.get('op')

@@ -3,14 +3,14 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = ['app.py', 'recommendations.py', 'resume_pdf.py', 'web/index.html', 'web/assistant.js', 'start-windows.cmd', 'start.sh',
+FILES = ['preferences.py', 'career.py', 'startup.py', 'web/features.js', 'tests/test_features.py', 'app.py', 'recommendations.py', 'resume_pdf.py', 'web/index.html', 'web/assistant.js', 'start-windows.cmd', 'start.sh',
          'config.example.json', 'examples/catalog.example.json', 'README.md',
          '.gitignore', 'tests/test_app.py', 'tests/test_recommendations.py', 'tests/test_resume_pdf.py', 'requirements-ai.txt', 'start-local-ai.ps1', 'tools/build_release.py',
          '.github/workflows/test.yml']
 
 
 def build():
-    target = ROOT / 'dist' / 'autumn-job-tracker-v1.1.0.zip'
+    target = ROOT / 'dist' / 'autumn-job-tracker-v1.2.0.zip'
     target.parent.mkdir(exist_ok=True)
     with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as z:
         for name in FILES:

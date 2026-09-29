@@ -31,3 +31,6 @@ venv/
 **/resume-drafts.json
 /runtime/
 /models/
+
+**/job-preferences.json
+**/career-plan.json

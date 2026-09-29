@@ -19,7 +19,7 @@ function renderRecommendations(){
   $('#aiSettings').onclick=openAISettings;
   if(!r){$('#content').innerHTML='<div class="empty">正在读取推荐…</div>';return;}
   let html=(r.date&&r.date!==today?'<p class="warning">这里是上次推荐，今日更新尚未完成。</p>':'')+(r.errors||[]).map(e=>'<p class="small muted">'+esc(e)+'</p>').join('');
-  const items=(r.items||[]).filter(j=>!wasApplied(j)&&commonFilter(j));
+  const items=(r.items||[]).filter(j=>availableJob(j)&&commonFilter(j));
   for(const tier of ['优先投递','可以尝试','待确认']){
     const group=items.filter(j=>j.tier===tier); if(!group.length)continue;
     html+=`<h2>${tier} · ${group.length}</h2>`+group.map(j=>`<div class="box small"><b>${esc(j.recommendation_origin)}</b> · ${esc(j.application_mode)}<br>${esc(j.application_note)}${list(j.recommendation_warnings)}${j.resume_reason?'<p>简历建议：'+esc(j.resume_reason)+'</p>':''}<button data-ai="${esc(j.key)}">本地 AI 微调简历</button></div>`+jobCard(j)).join('');

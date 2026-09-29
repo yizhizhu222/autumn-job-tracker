@@ -13,6 +13,8 @@ from urllib.parse import urlparse, urlencode, parse_qs, urljoin
 from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHandler
 from urllib.error import URLError
 import xml.etree.ElementTree as ET
+from preferences import Preferences
+import career
 
 PREFS = 'assistant-settings.json'
 DAILY = 'daily-recommendations.json'
@@ -150,6 +152,9 @@ class Assistant:
         self.busy = threading.Lock(); self.state_lock = threading.RLock()
         self.progress = {'running': False, 'message': '尚未运行'}
         self.stop = threading.Event()
+        self.preferences = Preferences(store, same_job)
+        self.career_busy = threading.Lock()
+        self.career_progress = {'running': False, 'message': ''}
 
     def read(self, name, default):
         with self.store.lock:
@@ -180,7 +185,8 @@ class Assistant:
         with self.state_lock: progress = dict(self.progress)
         report = self.read(DAILY, {'date': '', 'items': [], 'message': '正在准备今日推荐'})
         applied = self.store.read('投递记录.json')['applications'].values()
-        report['items'] = [j for j in report['items'] if not any(self.same_job(j, a) for a in applied)]
+        prefs = self.preferences.read()
+        report['items'] = [j for j in report['items'] if self.preferences.allowed(j,prefs) and not any(self.same_job(j, a) for a in applied)]
         return {'settings': self.settings(), 'report': report, 'progress': progress,
                 'drafts': self.read(DRAFTS, {'items': []})['items']}
 
@@ -190,6 +196,75 @@ class Assistant:
             return {'available': self.settings()['model'] in models, 'models': models, 'message': '本地 Ollama 已连接'}
         except (OSError, ValueError, KeyError):
             return {'available': False, 'models': [], 'message': '本地 Ollama 未启动，请先运行本地AI启动脚本'}
+
+    def career_status(self):
+        plan = self.read(career.FILE, None)
+        if plan:
+            applied = list(self.store.read('投递记录.json')['applications'].values())
+            catalog = {j['key']: j for j in self.store.read('岗位库.json')['jobs']}
+            prefs = self.preferences.read()
+            def allowed(j):
+                actual = catalog.get(j['key'])
+                return actual is not None and self.preferences.allowed(actual,prefs) and not any(self.same_job(actual,a) for a in applied)
+            plan['current_jobs'] = [j for j in plan['current_jobs'] if allowed(j)]
+            for p in plan['projects']: p['jobs_after'] = [j for j in p['jobs_after'] if allowed(j)]
+        with self.state_lock: progress = dict(self.career_progress)
+        return {'plan': plan, 'progress': progress}
+
+    def analyze_career(self, data):
+        major = clipped(data.get('major'),150)
+        if not major: raise ValueError('请填写专业；没有简历内容也可以分析')
+        if not self.career_busy.acquire(blocking=False): return {'started':False}
+        try:
+            s=self.settings()
+            profile=clipped(data.get('profile',s['profile']),24000)
+            with self.store.lock:
+                applied=list(self.store.read('投递记录.json')['applications'].values())
+                prefs=self.preferences.read()
+                jobs=[j for j in self.store.read('岗位库.json')['jobs'] if self.preferences.allowed(j,prefs) and not any(self.same_job(j,a) for a in applied)]
+                plan=career.build_plan(major,profile,jobs)
+                old=self.read(career.FILE,{})
+                # Completion belongs to this candidate, not a different profile or major.
+                if old.get('profile_hash')==plan['profile_hash'] and old.get('major')==major:
+                    for p in plan['projects']:
+                        previous=next((x for x in old.get('projects',[]) if x['id']==p['id']),{})
+                        for k in ('status','completion_evidence'): p[k]=previous.get(k,p[k])
+                self.store.write(career.FILE,plan)
+            with self.state_lock: self.career_progress={'running':True,'message':'基础分析已保存，正在获取本地AI建议'}
+            threading.Thread(target=self._career_ai,args=(plan,profile,s['model']),daemon=True).start()
+            return {'started':True}
+        except Exception:
+            self.career_busy.release()
+            raise
+
+    def _career_ai(self, plan, profile, model):
+        ai=None; status='本地AI分析未完成，保留基础分析与项目方案'
+        try:
+            if not self.model_status()['available']: raise ValueError('本地模型尚未就绪，当前为规则分析与项目方案')
+            result=ai_json(model,'分析简历的证据缺口和项目实施建议。项目均为计划，不是已完成经历。只输出 {"summary":"简历诊断","improvements":["原文证据不足之处与补充方式"],"project_advice":["针对输入项目的具体实施建议"]}。禁止增加候选人经历、招聘岗位、招聘统计或录用承诺。',{'major':plan['major'],'resume':profile,'evidence':plan['evidence'],'projects':[{k:p[k] for k in ('title','problem','deliverables','acceptance')} for p in plan['projects']]})
+            ai={'summary':clipped(result.get('summary'),2000),'improvements':strings(result.get('improvements')),'project_advice':strings(result.get('project_advice'))}
+            status='本地AI分析已完成；模型建议需要人工核对'
+        except (OSError,ValueError,KeyError,TypeError) as e:
+            ai=None;status='本地AI暂不可用，保留基础分析与完整项目方案'
+        finally:
+            try:
+                with self.store.lock:
+                    current=self.read(career.FILE,{})
+                    if current.get('generated_at')==plan['generated_at']:
+                        current.update(ai=ai,ai_status=status);self.store.write(career.FILE,current)
+                with self.state_lock: self.career_progress={'running':False,'message':status}
+            finally: self.career_busy.release()
+
+    def project_progress(self, data):
+        with self.store.lock:
+            plan=self.read(career.FILE,{})
+            project=next((x for x in plan.get('projects',[]) if x['id']==data.get('id')),None)
+            if not project or data.get('status') not in ('planned','working','completed'): raise ValueError('项目或状态无效')
+            proof=clipped(data.get('evidence'),3000)
+            if data['status']=='completed' and len(proof)<20: raise ValueError('请记录交付物位置及验收结果（至少20字）；勾选完成不会自动写入简历')
+            project.update(status=data['status'],completion_evidence=proof)
+            self.store.write(career.FILE,plan)
+        return {'ok':True}
 
     def note(self, message):
         with self.state_lock: self.progress['message'] = message
@@ -216,6 +291,7 @@ class Assistant:
         errors = []
         try:
             s = self.settings(); date = self.today().isoformat()
+            prefs = self.preferences.read()
             catalog = self.store.read('岗位库.json')
             candidates = copy.deepcopy(catalog['jobs'])
             for j in candidates: j['recommendation_origin'] = '已有岗位 · 本日重新排序'
@@ -223,6 +299,7 @@ class Assistant:
             applied_now=list(self.store.read('投递记录.json')['applications'].values())
             initial=[]
             for job in candidates:
+                if not self.preferences.allowed(job,prefs): continue
                 if any(self.same_job(job,a) for a in applied_now): continue
                 tier,priority,warnings=rank_job(job)
                 initial.append(dict(job,tier=tier,priority=priority,recommendation_warnings=warnings,
@@ -241,6 +318,8 @@ class Assistant:
                 year = int(year_match.group()) if year_match else self.today().year + (1 if self.today().month >= 7 else 0)
                 focus = ['技术支持 实施 测试', '数据运营 项目助理 售前', '质量管理 产品助理 技术培训'][self.today().toordinal() % 3]
                 queries = [f'{year} 量子计算 校园招聘 本科', f'{year} 秋招 {focus}', f'{year} 量子科技 招聘 运营 技术支持']
+                region = prefs.get('province','')+' '+prefs.get('city','')
+                queries = [q+' '+region.strip() for q in queries]
                 found = {}
                 for query in queries:
                     try:
@@ -251,6 +330,7 @@ class Assistant:
                 for old in candidates:
                     if old.get('source'): found.setdefault(old['source'],{'title':old['company'],'url':old['source'],'snippet':''})
                 for index, hit in enumerate(list(found.values())[:12]):
+                    if self.preferences.excluded({'source':hit['url']},self.preferences.read()): continue
                     self.note(f'核对招聘网页 {index + 1}/{min(12,len(found))}')
                     try:
                         body = page_text(fetch_public(hit['url']))
@@ -270,7 +350,7 @@ class Assistant:
                             notes='来源摘录：'+evidence, source_excerpt=body[:12000], evidence=evidence,
                             recommendation_origin='今日发现 · 公开网页', online_confirmed=False,
                             variant=None, resume={'base':'待选择','path':''}, change_note='可用本地AI生成少量措辞建议。')
-                        if not any(self.same_job(j, old) for old in candidates + new_jobs): new_jobs.append(j)
+                        if self.preferences.allowed(j,self.preferences.read()) and not any(self.same_job(j, old) for old in candidates + new_jobs): new_jobs.append(j)
                     except (OSError, ValueError, KeyError, TypeError): errors.append('部分网页或模型响应未能核实，未当作可投岗位')
                 if not model_ready: errors.append('本地模型尚未就绪；本次采用已有岗位，不把搜索摘要当作具体岗位')
             candidates = new_jobs + candidates
@@ -283,6 +363,7 @@ class Assistant:
             applied = list(self.store.read('投递记录.json')['applications'].values())
             pool = []
             for j in candidates:
+                if not self.preferences.allowed(j,self.preferences.read()): continue
                 if any(self.same_job(j,a) for a in applied): continue
                 tier, priority, warnings = rank_job(j)
                 j.update(tier=tier, priority=priority, recommendation_warnings=warnings,
