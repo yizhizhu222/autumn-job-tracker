@@ -40,3 +40,5 @@ venv/
 **/career-plan-history.json
 
 **/daily-queue.json
+
+**/application-feedback.json

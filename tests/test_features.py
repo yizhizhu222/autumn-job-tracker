@@ -1,3 +1,4 @@
+from quality_fixture import mock_quality
 import json
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ from startup import Startup
 
 class FeatureTests(unittest.TestCase):
     def setUp(self):
+        mock_quality(self)
         self.temp=tempfile.TemporaryDirectory(); self.store=app.Store(self.temp.name)
         self.prefs=Preferences(self.store,app.same_job)
         self.engine=recommendations.Assistant(self.store,lambda:date(2026,9,29),app.same_job)

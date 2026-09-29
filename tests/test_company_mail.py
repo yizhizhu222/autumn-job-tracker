@@ -1,3 +1,4 @@
+from quality_fixture import mock_quality
 import json
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from mailcheck import MailChecks,address
 
 class CompanyTests(unittest.TestCase):
     def setUp(self):
+        mock_quality(self)
         self.temp=tempfile.TemporaryDirectory();self.store=app.Store(self.temp.name)
         self.engine=recommendations.Assistant(self.store,lambda:date(2026,9,29),app.same_job)
     def tearDown(self):self.temp.cleanup()

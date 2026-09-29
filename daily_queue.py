@@ -65,14 +65,19 @@ class DailyQueue:
                         recent_same = any(self.same_job(job, j) and (self.today() - date.fromisoformat(d)).days < 7 for d, j in previous)
                         if not reason or recent_same: continue
                     candidates.append(dict(job, repeat_reason=reason))
-                # Breadth first, then a second role per company, never more than ten roles.
                 selected = []
-                for maximum in (1, 2):
-                    for job in candidates:
-                        if len(selected) >= LIMIT: break
-                        if any(self.same_job(job, j) for j in selected): continue
-                        if sum(same_company(job, j) for j in selected) >= maximum: continue
-                        selected.append(job)
+                for lane in ('ready','recommend'):
+                    lane_jobs=[]
+                    for maximum in (1,2):
+                        for job in candidates:
+                            if len(lane_jobs)>=5: break
+                            quality=job.get('quality',{})
+                            if not quality.get('ready' if lane=='ready' else 'recommended'): continue
+                            if any(same_company(job,j) for j in selected): continue
+                            if any(self.same_job(job,j) for j in lane_jobs): continue
+                            if sum(same_company(job,j) for j in lane_jobs)>=maximum: continue
+                            lane_jobs.append(dict(job,daily_lane=lane))
+                    selected.extend(lane_jobs)
                 batch['entries'] = copy.deepcopy(selected)
             if batch.get('imported') and not batch.get('migration_checked'):
                 for entry in batch['entries']:
@@ -83,17 +88,29 @@ class DailyQueue:
                         entry['retired_repeat'] = not reason or recent_same
                         if not entry['retired_repeat']: entry['repeat_reason'] = reason
                 batch['migration_checked'] = True
+            # Preserve today's quota and handled slots when upgrading to the 5+5 layout.
+            if any('daily_lane' not in j for j in batch['entries']):
+                groups=group_companies(batch['entries']); counts={'ready':0,'recommend':0}
+                for group in groups:
+                    lane=next((lane for lane in ('ready','recommend') if counts[lane]+len(group['jobs'])<=5),'held')
+                    for j in group['jobs']: j['daily_lane']=lane
+                    if lane!='held':counts[lane]+=len(group['jobs'])
             items, handled = [], 0
             for entry in batch['entries']:
-                if entry.get('retired_repeat') or any(same_company(entry, a) for a in applied + batch['seen']) or excluded(entry):
+                if entry.get('daily_lane')=='held' or entry.get('retired_repeat') or any(same_company(entry, a) for a in applied + batch['seen']) or excluded(entry):
                     handled += 1; continue
                 current = next((j for j in jobs if self.same_job(entry, j)), None)
                 if current:
-                    items.append(dict(current, repeat_reason=entry.get('repeat_reason', '')))
+                    quality=current.get('quality',{})
+                    lane=entry.get('daily_lane','recommend')
+                    if quality.get('ready' if lane=='ready' else 'recommended'):
+                        items.append(dict(current, repeat_reason=entry.get('repeat_reason', ''),daily_lane=lane))
             if state != before or not (self.store.root / FILE).exists(): self.store.write(FILE, state)
             return {'date': day, 'limit': LIMIT, 'allocated': len(batch['entries']), 'handled': handled,
                     'remaining': len(items), 'complete': bool(batch['entries']) and handled == len(batch['entries']),
                     'items': items, 'companies': group_companies(items), 'rest_message': REST_MESSAGE,
+                    'lanes': {lane:{'limit':5,'allocated':sum(j.get('daily_lane')==lane for j in batch['entries']),'remaining':sum(j.get('daily_lane')==lane for j in items)} for lane in ('ready','recommend')},
+                    'quality_held':sum(not j.get('quality',{}).get('recommended') and not j.get('quality',{}).get('ready') for j in jobs),
                     'seen_companies': [{'key': j['key'], 'company': j['company']} for j in batch['seen']]}
 
     def change(self, data):

@@ -5,28 +5,31 @@ async function assistantCall(payload) {
 }
 async function refreshAssistant(){
   try { const r=await fetch('/api/assistant'); if(!r.ok)throw Error(); assistantState=await r.json();
-    if(tab==='recommend')render();
+    if(tab==='recommend'||tab==='ready')render();
     if(assistantState.progress.running&&!assistantPoll)assistantPoll=setInterval(refreshAssistant,4000);
     if(!assistantState.progress.running&&assistantPoll){clearInterval(assistantPoll);assistantPoll=null;await load();}
   } catch { if($('#aiStatus'))$('#aiStatus').textContent='推荐服务未连接'; }
 }
 function renderRecommendations(){
  const r=assistantState?.report,p=assistantState?.progress,d=r?.daily;
- const items=(r?.items||[]).filter(j=>availableJob(j)&&commonFilter(j));
- $('#intro').innerHTML=`<section class="page-intro"><div class="row"><div><h2>为你精选 <span class="tag gray">${(r?.companies||[]).filter(g=>g.jobs.some(j=>items.some(x=>x.key===j.key))).length} 家公司</span></h2><p id="aiStatus">${esc(p?.running?p.message:d?`今日清单 ${d.allocated} / ${d.limit} 个岗位 · 已收起 ${d.handled} 个 · 剩余 ${d.remaining} 个`:'正在准备今日清单')}</p></div><div class="actions"><button id="generateDaily" ${p?.running||!connected?'disabled':''}>更新岗位信息</button><button id="aiSettings" class="quiet">AI 设置</button></div></div></section>`;
+ const lane=tab==='ready'?'ready':'recommend',laneInfo=d?.lanes?.[lane];
+ const items=(r?.items||[]).filter(j=>j.daily_lane===lane&&availableJob(j)&&commonFilter(j));
+ $('#intro').innerHTML=`<section class="page-intro"><div class="row"><div><h2>${lane==='ready'?'岗位直达':'今日推荐'} <span class="tag gray">${(r?.companies||[]).filter(g=>g.jobs.some(j=>items.some(x=>x.key===j.key))).length} 家公司</span></h2><p id="aiStatus">${esc(p?.running?p.message:d?`本栏 ${laneInfo?.allocated||0} / 5 个岗位 · 剩余 ${laneInfo?.remaining||0} 个；两栏合计 ${d.allocated} / 10 个`:'正在准备今日清单')}</p></div><div class="actions"><button id="generateDaily" ${p?.running||!connected?'disabled':''}>更新岗位信息</button><button id="aiSettings" class="quiet">AI 设置</button></div></div></section>`;
  $('#generateDaily').onclick=async()=>{try{await assistantCall({op:'generate'});await refreshAssistant();}catch(e){alert(e.message);}};$('#aiSettings').onclick=openAISettings;
  if(!r){$('#content').innerHTML='<div class="empty">正在准备推荐…</div>';return;}
- let html='<p class="small muted">每天固定一批，最多10个岗位。同公司放在一起；处理后不补位，明天优先换新公司。</p>';
+ let html=`<p class="small muted">${lane==='ready'?'入口明确、简历已配好、届别及线上面试等条件已核对。':'结合简历与具体JD筛选，列出推荐依据、短板和待核实条件。'} 每天5个直达＋5个推荐，公司不跨栏重复，处理后不补位。</p>`;
+ if(laneInfo&&laneInfo.allocated<5)html+=`<p class="small muted">本栏缺 ${5-laneInfo.allocated} 个高质量机会，保留缺额；不会用重复公司或缺JD的线索补数。</p>`;
+ if(d?.quality_held)html+=`<p class="small muted">岗位库另有 ${d.quality_held} 条线索尚未通过来源、JD或简历核对，不占本日名额。</p>`;
  if(d?.seen_companies?.length)html+=`<details class="small" data-detail="seen-today"><summary>今天看完的公司 · ${d.seen_companies.length}</summary>${d.seen_companies.map(c=>`<p>${esc(c.company)} <button class="quiet" data-undo-seen="${esc(c.key)}">撤销看完</button></p>`).join('')}</details>`;
  if(r.errors?.length)html+=`<details class="small" data-detail="recommend-errors"><summary>更新说明 · ${r.errors.length} 项</summary>${list(r.errors)}</details>`;
- const groups=(r.companies||[]).map(g=>({...g,jobs:g.jobs.filter(j=>availableJob(j)&&commonFilter(j))})).filter(g=>g.jobs.length);
+ const groups=(r.companies||[]).map(g=>({...g,jobs:g.jobs.filter(j=>j.daily_lane===lane&&availableJob(j)&&commonFilter(j))})).filter(g=>g.jobs.length);
  html+=groups.map(companyCard).join('');
  let empty='';
  if(!groups.length){
   if(d?.complete)empty=`<section class="empty daily-rest"><span class="rest-label">今天先到这里</span><h3>给自己一点轻松的时间</h3><p>${esc(d.rest_message)}</p><span class="small muted">明天再看新机会。已投公司的进展留在「已投记录」里。</span></section>`;
-  else if(d?.remaining)empty='<div class="empty">当前筛选下没有岗位。<br><span class="small">清除搜索或分类筛选，可以查看今天剩余的清单。</span></div>';
-  else if(d?.allocated)empty='<div class="empty">今日清单在当前地域或可用条件下没有剩余岗位。<br><span class="small">切换地域可查看原清单；今天不补位，明天按新条件推荐。</span></div>';
-  else empty='<div class="empty">暂时没有符合去重规则的新公司。<br><span class="small">可以更新岗位信息；找到真实线索后再安排今日清单，不用重复公司凑数。</span></div>';
+  else if(laneInfo?.remaining)empty='<div class="empty">当前筛选下没有岗位。<br><span class="small">清除搜索或分类筛选，可以查看今天剩余的清单。</span></div>';
+  else if(laneInfo?.allocated)empty='<div class="empty">本栏已处理完，或当前地域与质量条件下没有剩余岗位。<br><span class="small">可切换另一栏查看剩余机会；今天不补位，明天继续。</span></div>';
+  else empty='<div class="empty">暂时没有同时符合质量与去重要求的新公司。<br><span class="small">可以更新岗位信息；找到真实线索后再安排今日清单，不用重复公司凑数。</span></div>';
  }
  $('#content').innerHTML=html+empty;
 
@@ -37,7 +40,7 @@ async function openAISettings(){
   let modal=document.querySelector('#assistantModal');
   if(!modal){modal=document.createElement('dialog');modal.id='assistantModal';document.body.append(modal);}
   const paths=[...new Set([s.resume_path,...Object.values(catalog.originals||{}).map(r=>r.path),...catalog.jobs.map(j=>j.resume?.path)].filter(Boolean))];
-  modal.innerHTML=`<form id="assistantForm"><h2>本地 AI 与每日推荐</h2><p id="modelStatus">检查本地模型…</p><label>本地模型名称<input name="model" value="${esc(s.model)}" required></label><p class="small muted">仅连接本机 Ollama（127.0.0.1:11434），不需要 API Key。首次运行需安装 Ollama 并下载模型。</p><label><input type="checkbox" name="enabled" style="width:auto" ${s.enabled?'checked':''}> 开启每日推荐（程序运行期间）</label><label>北京时间每天几点生成<input name="hour" type="number" min="0" max="23" value="${s.hour}"></label><p class="small muted">每天最多10个岗位；已投或看完后不补位，刷新不会重置。</p><label><input type="checkbox" name="search_enabled" style="width:auto" ${s.search_enabled?'checked':''}> 联网查找公开招聘网页</label><p class="small muted">关机期间不会执行；当天恢复运行后补跑。不足10个时保留真实数量；更新只核查与收集线索，不重置当天清单。</p><label>求职条件<textarea name="preferences">${esc(s.preferences)}</textarea></label><label>用于分析与微调的简历<select name="resume_path"><option value="">手动粘贴正文</option>${paths.map(p=>`<option value="${esc(p)}" ${p===s.resume_path?'selected':''}>${esc(p)}</option>`).join('')}</select></label><button id="extractResume" type="button">读取所选简历正文</button><label>简历正文（只送往本机模型）<textarea name="profile" style="min-height:180px">${esc(s.profile)}</textarea></label><p class="small muted">联网搜索只发送通用岗位关键词，简历正文不进入搜索请求。</p><p id="assistantError" class="error"></p><div class="actions"><button type="submit" class="primary">保存设置</button><button type="button" id="closeAssistant">关闭</button></div></form>`;
+  modal.innerHTML=`<form id="assistantForm"><h2>本地 AI 与每日推荐</h2><p id="modelStatus">检查本地模型…</p><label>本地模型名称<input name="model" value="${esc(s.model)}" required></label><p class="small muted">仅连接本机 Ollama（127.0.0.1:11434），不需要 API Key。首次运行需安装 Ollama 并下载模型。</p><label><input type="checkbox" name="enabled" style="width:auto" ${s.enabled?'checked':''}> 开启每日推荐（程序运行期间）</label><label>北京时间每天几点生成<input name="hour" type="number" min="0" max="23" value="${s.hour}"></label><p class="small muted">每天5个直达＋5个推荐；质量不足保留缺额，已处理不补位，刷新不会重置。</p><label><input type="checkbox" name="search_enabled" style="width:auto" ${s.search_enabled?'checked':''}> 联网查找公开招聘网页</label><p class="small muted">关机期间不会执行；当天恢复运行后补跑。不足10个时保留真实数量；更新只核查与收集线索，不重置当天清单。</p><label>求职条件<textarea name="preferences">${esc(s.preferences)}</textarea></label><label>用于分析与微调的简历<select name="resume_path"><option value="">手动粘贴正文</option>${paths.map(p=>`<option value="${esc(p)}" ${p===s.resume_path?'selected':''}>${esc(p)}</option>`).join('')}</select></label><button id="extractResume" type="button">读取所选简历正文</button><label>简历正文（只送往本机模型）<textarea name="profile" style="min-height:180px">${esc(s.profile)}</textarea></label><p class="small muted">联网搜索只发送通用岗位关键词，简历正文不进入搜索请求。</p><p id="assistantError" class="error"></p><div class="actions"><button type="submit" class="primary">保存设置</button><button type="button" id="closeAssistant">关闭</button></div></form>`;
   modal.showModal();
   $('#closeAssistant').onclick=()=>modal.close();
   $('#extractResume').onclick=async()=>{try{const f=$('#assistantForm');const d=await assistantCall({op:'extract',path:f.elements.resume_path.value});f.elements.profile.value=d.text;}catch(e){$('#assistantError').textContent=e.message;}};

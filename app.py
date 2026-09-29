@@ -19,6 +19,7 @@ from preferences import REGIONS
 from startup import Startup
 from companies import same_company, group_companies
 from mailcheck import MailChecks, address
+from application_feedback import Feedback
 
 BASE = Path(__file__).resolve().parent
 TZ = timezone(timedelta(hours=8))
@@ -242,6 +243,7 @@ class Server(ThreadingHTTPServer):
     def __init__(self, directory, port=18728):
         self.store = Store(directory)
         self.assistant = Assistant(self.store, today, same_job)
+        self.feedback = Feedback(self.store,today,self.assistant)
         self.token = secrets.token_urlsafe(32)
         super().__init__(('127.0.0.1', port), Handler)
         self.startup = Startup(directory, self.server_port, BASE)
@@ -274,7 +276,7 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path)
         store = self.server.store
         if path == '/health':
-            return self.send({'app': 'autumn-job-tracker', 'version': '1.5.0', 'data_dir': str(store.root)})
+            return self.send({'app': 'autumn-job-tracker', 'version': '1.6.0', 'data_dir': str(store.root)})
         if path == '/api/mailbox': return self.send(self.server.mailchecks.status())
         if path == '/api/startup':
             return self.send(self.server.startup.status())
@@ -289,6 +291,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({'catalog': store.read(CATALOG), 'ledger': store.read(LEDGER),
                     'token': self.server.token, 'today': today().isoformat(), 'data_dir': str(store.root),
                     'preferences':self.server.assistant.preferences.read(), 'regions':REGIONS,
+                    'feedback':self.server.feedback.status(),
                     'excluded_keys':[j['key'] for j in store.read(CATALOG)['jobs'] if self.server.assistant.preferences.excluded(j)],
                     'allowed_keys':[j['key'] for j in self.server.assistant.visible_jobs()],
                     'companies':group_companies(self.server.assistant.visible_jobs())})
@@ -296,6 +299,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send((BASE / 'web' / 'index.html').read_bytes(), mime='text/html; charset=utf-8')
         if path == '/assistant.js':
             return self.send((BASE / 'web' / 'assistant.js').read_bytes(), mime='text/javascript; charset=utf-8')
+        if path == '/feedback.js':
+            return self.send((BASE / 'web' / 'feedback.js').read_bytes(), mime='text/javascript; charset=utf-8')
         if path == '/company.js':
             return self.send((BASE / 'web' / 'company.js').read_bytes(), mime='text/javascript; charset=utf-8')
         if path == '/features.js':
@@ -315,7 +320,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.host_ok() or self.headers.get('Origin') not in (f'http://127.0.0.1:{port}', f'http://localhost:{port}') or not secrets.compare_digest(self.headers.get('X-Tracker-Token', ''), self.server.token):
             return self.send({'error': '请从本机看板操作'}, 403)
         endpoint = urlparse(self.path).path
-        if endpoint not in ('/api/change', '/api/assistant', '/api/preferences', '/api/startup', '/api/career', '/api/mailbox', '/api/day'):
+        if endpoint not in ('/api/change', '/api/assistant', '/api/preferences', '/api/startup', '/api/career', '/api/mailbox', '/api/day', '/api/feedback'):
             return self.send({'error': 'Not found'}, 404)
         try:
             n = int(self.headers.get('Content-Length', '0'))
@@ -323,6 +328,10 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('请求内容为空或超过8MB')
             p = json.loads(self.rfile.read(n))
             if not isinstance(p,dict): raise ValueError('请求必须是对象')
+            if endpoint == '/api/feedback':
+                if p.get('op')=='save':return self.send(self.server.feedback.save(p))
+                if p.get('op')=='analyze':return self.send(self.server.feedback.analyze(p.get('key')))
+                raise ValueError('未知反馈操作')
             if endpoint == '/api/day': return self.send(self.server.assistant.daily_queue.change(p))
             if endpoint == '/api/mailbox':
                 engine=self.server.mailchecks

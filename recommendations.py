@@ -15,6 +15,7 @@ from urllib.error import URLError
 import xml.etree.ElementTree as ET
 from preferences import Preferences
 import career
+from opportunity_quality import assess, search_queries, diverse_hits, source_info, host
 from daily_queue import DailyQueue
 from companies import same_company, group_companies
 
@@ -156,6 +157,7 @@ class Assistant:
         self.stop = threading.Event()
         self.preferences = Preferences(store, same_job)
         self.daily_queue = DailyQueue(store, today, same_job)
+        self.resume_cache = {}
         self.career_busy = threading.Lock()
         self.career_progress = {'running': False, 'message': ''}
 
@@ -199,8 +201,19 @@ class Assistant:
             for job in jobs:
                 tier, priority, warnings = rank_job(job)
                 job.update(tier=tier, priority=priority, recommendation_warnings=warnings)
+                profile=self.settings()['profile'];ready_file=False;basis='AI设置中的简历正文'
+                try:
+                    path=self.resume_file(job.get('resume',{}).get('path',''))
+                    cache_key=(str(path),path.stat().st_mtime_ns,path.stat().st_size)
+                    if cache_key not in self.resume_cache:
+                        if len(self.resume_cache)>30:self.resume_cache.clear()
+                        self.resume_cache[cache_key]=self.extract_resume(job['resume']['path'])
+                    profile=self.resume_cache[cache_key];ready_file=bool(profile.strip());basis=job['resume']['path']
+                except (ValueError,OSError,ImportError):pass
+                job['quality']=assess(job,profile,self.today(),ready_file)
+                job['quality']['resume_basis']=basis
             day = self.today().isoformat()
-            jobs.sort(key=lambda j: (-j['priority'], hashlib.sha256((day+j['key']).encode()).hexdigest()))
+            jobs.sort(key=lambda j: (j['quality']['source']['priority'], -j['quality']['score'], -j['priority'], hashlib.sha256((day+j['key']).encode()).hexdigest()))
             return self.daily_queue.view(jobs, self.settings()['profile'],
                 list(self.store.read('投递记录.json')['applications'].values()), self.preferences.excluded)
 
@@ -356,7 +369,7 @@ class Assistant:
                 focus = ['技术支持 实施 测试', '数据运营 项目助理 售前', '质量管理 产品助理 技术培训'][self.today().toordinal() % 3]
                 queries = [f'{year} 量子计算 校园招聘 本科', f'{year} 秋招 {focus}', f'{year} 量子科技 招聘 运营 技术支持']
                 region = prefs.get('province','')+' '+prefs.get('city','')
-                queries = [q+' '+region.strip() for q in queries]
+                queries = search_queries(year,focus,region.strip())
                 found = {}
                 for query in queries:
                     try:
@@ -366,13 +379,15 @@ class Assistant:
                 # Also revisit known recruitment sources; search outages do not erase the company pool.
                 for old in candidates:
                     if old.get('source'): found.setdefault(old['source'],{'title':old['company'],'url':old['source'],'snippet':''})
-                for index, hit in enumerate(list(found.values())[:12]):
+                crawl=diverse_hits(list(found.values()))
+                for index, hit in enumerate(crawl):
                     if self.preferences.excluded({'source':hit['url']},self.preferences.read()): continue
-                    self.note(f'核对招聘网页 {index + 1}/{min(12,len(found))}')
+                    self.note(f'核对招聘网页 {index + 1}/{len(crawl)}')
                     try:
-                        body = page_text(fetch_public(hit['url']))
+                        raw_page=fetch_public(hit['url'])
+                        body = page_text(raw_page)
                         if not model_ready: continue
-                        result = ai_json(s['model'], '从网页提取一个真实具体招聘岗位；目录页、新闻、搜索结果或缺岗位要求时返回{"job":null}。输出{"job":{"company":"原文公司名","role":"原文岗位名","group":"方向","duties":[],"requirements":[],"place":"地点或待确认","salary":"原文薪资或待确认","online":"原文面试方式或待确认","evidence":"原文连续引用20到120字","closed":false}}。证据必须包含岗位名。', {'today': date, 'page': body[:10000]})
+                        result = ai_json(s['model'], '从网页提取一个真实具体招聘岗位；目录页、新闻、搜索结果或缺岗位要求时返回{"job":null}。输出{"job":{"company":"原文公司名","role":"原文岗位名","group":"方向","duties":["逐字引用原文"],"requirements":["逐字引用原文"],"place":"地点或待确认","salary":"原文薪资或待确认","online":"原文面试方式或待确认","evidence":"原文连续引用20到120字","closed":false}}。证据必须包含岗位名。', {'today': date, 'page': body[:10000]})
                         j = result.get('job')
                         if not isinstance(j, dict) or j.get('closed') is True: continue
                         company, role = clipped(j.get('company'),150), clipped(j.get('role'),200)
@@ -382,19 +397,57 @@ class Assistant:
                         j = {k: clipped(j.get(k),1000) for k in ('company','role','group','place','salary','online')}
                         j.update(key=key, aliases=[key], source=hit['url'], entry=hit['url'], apply_url=hit['url'],
                             direct=True, channel='web', action_label='打开岗位详情 / 申请入口', verified_on=date,
-                            requirements=strings(result['job'].get('requirements')), duties=strings(result['job'].get('duties')),
+                            requirements=[v for v in strings(result['job'].get('requirements')) if v in body], duties=[v for v in strings(result['job'].get('duties')) if v in body],
                             strengths=[], gaps=[], match='待分析', confidence='已抓取网页；模型提取待核对',
                             notes='来源摘录：'+evidence, source_excerpt=body[:12000], evidence=evidence,
                             recommendation_origin='今日发现 · 公开网页', online_confirmed=False,
                             variant=None, resume={'base':'待选择','path':''}, change_note='可用本地AI生成少量措辞建议。')
-                        if self.preferences.allowed(j,self.preferences.read()) and not any(self.same_job(j, old) for old in candidates + new_jobs): new_jobs.append(j)
+                        # A fetched article is not automatically an application form.
+                        j['direct']=bool(re.search(r'<form\b|投递简历|立即投递|立即申请|申请职位',raw_page,re.I)) and 'mp.weixin.qq.com' not in host(hit['url'])
+                        j['channel']='web' if j['direct'] else 'unverified'
+                        if hit.get('source_proof') and hit.get('company')==company: j['source_proof']=hit['source_proof']
+                        # Follow explicit recruiting links from a verified university/company source.
+                        from source_links import recruitment_links
+                        if source_info(j)['verified']:
+                            for link in recruitment_links(raw_page,hit['url'],company,date):
+                                if link['url'] not in found and len(crawl)<26:
+                                    found[link['url']]=link; crawl.append(link)
+                        j['eligibility']='；'.join(line for line in body.splitlines() if re.search(r'2027|27届',line))[:500]
+                        for field in ('salary','online','place'):
+                            if j[field] not in body:j[field]='待确认'
+                        facts=' '.join(j['requirements']+j['duties'])
+                        j['online_confirmed']=bool(re.search(r'(线上|视频|远程)面试',body)) and not bool(re.search(r'(不支持|不接受|没有)(线上|视频|远程)面试',body))
+                        j['salary_min_confirmed']=False
+                        salary=re.search(r'(\d+(?:\.\d+)?)\s*[-—~至]\s*\d+(?:\.\d+)?\s*[kK]',j['salary'])
+                        if salary and float(salary.group(1))>4 and re.search(r'固定月薪|基本月薪|底薪',j['salary']): j['salary_min_confirmed']=True
+                        # Reuse a real existing resume with the best explicit JD overlap.
+                        best=None
+                        for base in candidates:
+                            path=base.get('resume',{}).get('path','')
+                            try:
+                                if path and self.resume_file(path):
+                                    score=len({k for k,v in career.evidence(facts).items() if v} & {k for k,v in career.evidence(' '.join(base.get('requirements',[])+base.get('duties',[]))).items() if v})
+                                    if best is None or score>best[0]:best=(score,base)
+                            except (ValueError,OSError):pass
+                        if best and best[0]>0:
+                            j['resume']=copy.deepcopy(best[1]['resume']);j['resume_reason']='按已有底稿与JD技能交集选取，请核对该文件的真实经历。'
+                        if self.preferences.allowed(j,self.preferences.read()) and not any(self.same_job(j, old) and j['source']==old.get('source') for old in new_jobs): new_jobs.append(j)
                     except (OSError, ValueError, KeyError, TypeError): errors.append('部分网页或模型响应未能核实，未当作可投岗位')
                 if not model_ready: errors.append('本地模型尚未就绪；本次采用已有岗位，不把搜索摘要当作具体岗位')
             candidates = new_jobs + candidates
             with self.store.lock:
                 current = self.store.read('岗位库.json')
+                added_count=0
                 for j in new_jobs:
-                    if not any(self.same_job(j,old) for old in current['jobs']): current['jobs'].append(j)
+                    old=next((old for old in current['jobs'] if self.same_job(j,old)),None)
+                    if old is None:
+                        current['jobs'].append(j);added_count+=1
+                    else:
+                        sources=old.setdefault('discovery_sources',[])
+                        if not any(x.get('url')==j['source'] for x in sources):sources.append({'url':j['source'],'checked_on':date})
+                        if j['source']==old.get('source') or source_info(j)['priority']<source_info(old)['priority']:
+                            for field in ('source','entry','apply_url','direct','channel','verified_on','requirements','duties','eligibility','online','online_confirmed','salary','salary_min_confirmed','place','source_proof','source_excerpt','evidence'):
+                                if field in j:old[field]=j[field]
                 if new_jobs: self.store.write('岗位库.json',current)
             # Rank first; do not spend AI time on already submitted jobs.
             applied = list(self.store.read('投递记录.json')['applications'].values())
@@ -428,9 +481,9 @@ class Assistant:
                             a=analyses[j['key']]; j.update(match=clipped(a.get('match'),60),strengths=strings(a.get('strengths')),gaps=strings(a.get('gaps')),resume_reason=clipped(a.get('resume_reason')),confidence='本地AI推断 · 请结合原JD核对')
                 except (OSError,ValueError,KeyError,TypeError): errors.append('AI匹配分析失败，保留原有分析和待确认项')
             elif not s['profile']: errors.append('请在AI设置中导入简历正文，才能进行个人匹配分析')
-            report={'date':date,'generated_at':datetime.now().isoformat(),'items':selected,'new_count':len(new_jobs),
+            report={'date':date,'generated_at':datetime.now().isoformat(),'items':selected,'new_count':added_count,
                 'target':s['target'],'errors':list(dict.fromkeys(errors)),
-                'message':f'今日推荐 {len(selected)} 个岗位；其中本次新发现 {sum(j.get("recommendation_origin","").startswith("今日发现") for j in selected)} 个。' + (' 数量不足时已扩大到可尝试和待确认项。' if len(selected)<s['target'] else ''),
+                'message':f'今日清单剩余 {len(selected)} 个岗位；本次新收集 {added_count} 条，按质量与固定清单规则安排。' + (' 本栏缺额保留，不用低质量线索补齐。' if len(selected)<s['target'] else ''),
                 'empty_reason':'现有候选均已投或未核实到具体岗位，请稍后重试联网更新；不会生成虚构岗位。' if not selected else ''}
             with self.store.lock:
                 current=self.store.read('岗位库.json')
@@ -444,7 +497,7 @@ class Assistant:
                 self.store.write('岗位库.json',current)
                 self.store.write(DAILY,report)
                 history=self.read('recommendation-history.json',{})
-                history[date]={'keys':[j['key'] for j in selected],'new_count':len(new_jobs),'message':report['message']}
+                history[date]={'keys':[j['key'] for j in selected],'new_count':added_count,'message':report['message']}
                 self.store.write('recommendation-history.json',history)
             self.note('今日推荐已更新')
         except Exception:

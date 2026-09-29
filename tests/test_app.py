@@ -1,3 +1,4 @@
+from quality_fixture import qualify
 import json
 from pathlib import Path
 import tempfile
@@ -117,6 +118,7 @@ class HttpTests(unittest.TestCase):
 
     def test_day_action_requires_auth_and_does_not_record_application(self):
         self.server.store.change({'op':'add_job','company':'HTTP company','role':'Support','url':'https://example.org/job'})
+        qualify(self.server.store,self.server.assistant,self.server.store.read(app.CATALOG)['jobs'][-1],app.today())
         with urlopen(self.url+'/api/state') as r: state=json.load(r)
         data=json.dumps({'op':'seen','key':state['allowed_keys'][0]}).encode()
         with self.assertRaises(HTTPError) as ctx: urlopen(Request(self.url+'/api/day',data=data))

@@ -1,3 +1,4 @@
+from quality_fixture import qualify
 import copy
 import json
 import tempfile
@@ -17,18 +18,18 @@ class RecommendationTests(unittest.TestCase):
     def tearDown(self): self.temp.cleanup()
     def add(self,company='Example',role='开发工程师'):
         self.store.change({'op':'add_job','company':company,'role':role,'url':'https://example.org/job'})
-        return self.store.read(app.CATALOG)['jobs'][-1]
+        return qualify(self.store,self.engine,self.store.read(app.CATALOG)['jobs'][-1],self.engine.today())
     def run_daily(self):
         self.engine.busy.acquire()
         with patch.object(self.engine,'model_status',return_value={'available':False}): self.engine.run()
         return self.engine.status()['report']
-    def test_low_fit_not_empty_and_submitted_excluded(self):
+    def test_qualified_jobs_kept_and_submitted_excluded(self):
         first=self.add();second=self.add('Other','支持工程师')
         self.store.change({'op':'mark','key':first['key'],'evidence':'submitted'})
         result=self.run_daily()
         self.assertEqual([j['key'] for j in result['items']],[second['key']])
-        self.assertEqual(result['items'][0]['tier'],'待确认')
-        self.assertIn('线上面试尚未确认',result['items'][0]['recommendation_warnings'])
+        self.assertEqual(result['items'][0]['tier'],'优先投递')
+        self.assertEqual(result['items'][0]['recommendation_warnings'],[])
     def test_daily_once_and_company_diversity(self):
         for i in range(5): self.add('Company',str(i))
         self.add('Other','Support')
@@ -64,7 +65,7 @@ class RecommendationTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.engine.resume_file('../../secret.txt')
     def test_tailoring_uses_recommended_baseline_not_unrelated_profile(self):
         job=self.add()
-        folder=self.store.root/'resumes';folder.mkdir()
+        folder=self.store.root/'resumes';folder.mkdir(exist_ok=True)
         original='负责项目文档整理并协助团队沟通。'
         (folder/'base.txt').write_text(original,encoding='utf-8')
         catalog=self.store.read(app.CATALOG)
