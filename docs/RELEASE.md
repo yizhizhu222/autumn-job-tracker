@@ -1,6 +1,6 @@
-## v1.7.0：新手启动与抓取修复
+## v1.7.1：新手启动与抓取修复
 
-首次使用请选择 **autumn-job-tracker-v1.7.0-windows-x64.zip**，解压后双击 **AutumnJobTracker.exe**，无需安装Python。
+首次使用请选择 **autumn-job-tracker-v1.7.1-windows-x64.zip**，解压后双击 **AutumnJobTracker.exe**，无需安装Python。
 
 1. 在首页导入自己的PDF或文本简历。
 2. 需要AI和自动发现岗位时，安装Ollama，双击setup-ai.cmd下载模型。

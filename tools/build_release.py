@@ -10,7 +10,7 @@ FILES = ['crawler.py','data_lock.py','launcher.py','setup-ai.cmd','web/onboardin
 
 
 def build():
-    target = ROOT / 'dist' / 'autumn-job-tracker-v1.7.0.zip'
+    target = ROOT / 'dist' / 'autumn-job-tracker-v1.7.1.zip'
     target.parent.mkdir(exist_ok=True)
     with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as z:
         for name in FILES:

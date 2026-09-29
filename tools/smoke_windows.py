@@ -13,7 +13,7 @@ from urllib.request import Request,build_opener,ProxyHandler
 exe=Path(sys.argv[1]).resolve()
 process_options={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
 with tempfile.TemporaryDirectory(prefix='tracker-release-') as temp:
-    data=Path(temp)/'fresh data';data.mkdir()
+    data=(Path(temp)/'fresh data').resolve();data.mkdir()
     (data/'assistant-settings.json').write_text('{"enabled":false,"search_enabled":false}',encoding='utf-8')
     sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
     url=f'http://127.0.0.1:{port}'
@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix='tracker-release-') as temp:
                 try:state=get('/api/state');break
                 except OSError:time.sleep(.25)
             else:raise RuntimeError('Executable startup timed out')
-            assert Path(get('/health')['data_dir'])==data
+            assert Path(get('/health')['data_dir']).samefile(data),'Executable must serve the requested data directory'
             for resource in ('/','/onboarding.js','/feedback.js'):
                 with opener.open(url+resource,timeout=3) as response:assert response.status==200
             if phase==0:

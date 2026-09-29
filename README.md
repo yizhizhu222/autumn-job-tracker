@@ -6,7 +6,7 @@
 
 **Windows用户：[下载最新版本](https://github.com/yizhizhu222/autumn-job-tracker/releases/latest) → 解压 → 双击 `AutumnJobTracker.exe`。不需要安装Python、Git或申请API Key。**
 
-在下载页展开 **Assets**，选择 `autumn-job-tracker-v1.7.0-windows-x64.zip`。不要选“Source code”，那是给使用源码的人准备的。
+在下载页展开 **Assets**，选择 `autumn-job-tracker-v1.7.1-windows-x64.zip`。不要选“Source code”，那是给使用源码的人准备的。
 
 把整个压缩包解压到可写目录，例如 `E:\求职工作台`，不要在压缩包内直接运行，也不要只拿走exe而丢掉 `_internal` 文件夹。启动后浏览器自动打开看板，保留程序窗口。
 
