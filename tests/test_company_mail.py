@@ -35,14 +35,14 @@ class CompanyTests(unittest.TestCase):
         self.assertFalse(same_company({'company':'量子甲'},{'company':'量子甲分公司'}))
         self.assertFalse(same_company({'company':'量子甲'},{'company':'量子乙'}))
         self.assertTrue(same_company({'company':'甲','company_aliases':['乙']},{'company':'乙有限公司'}))
-    def test_handled_company_replaced_by_other_real_company(self):
-        a=self.add('已投公司','数据分析');b=self.add('新公司','数据分析');self.add('新公司','数据运营')
-        self.store.write(recommendations.DAILY,{'items':[a]})
+    def test_fixed_batch_does_not_replace_handled_company(self):
+        a=self.add('已投公司','数据分析')
+        self.engine.daily_view()
+        self.add('新公司','数据分析');self.add('新公司','数据运营')
         self.store.change({'op':'mark','key':a['key'],'evidence':'已提交'})
         report=self.engine.status()['report']
-        self.assertEqual(len(report['companies']),1)
-        self.assertEqual(report['companies'][0]['company'],'新公司')
-        self.assertEqual(len(report['companies'][0]['jobs']),2)
+        self.assertEqual(report['companies'],[])
+        self.assertTrue(report['daily']['complete'])
     def test_project_needs_relevant_real_jd_not_just_major(self):
         self.assertEqual(career.build_plan('数据科学','',[])['projects'],[])
         job=self.add('Example','电话销售');self.assertEqual(career.build_plan('数据科学','',[job])['projects'],[])

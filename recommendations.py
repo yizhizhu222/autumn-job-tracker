@@ -15,6 +15,7 @@ from urllib.error import URLError
 import xml.etree.ElementTree as ET
 from preferences import Preferences
 import career
+from daily_queue import DailyQueue
 from companies import same_company, group_companies
 
 PREFS = 'assistant-settings.json'
@@ -154,6 +155,7 @@ class Assistant:
         self.progress = {'running': False, 'message': '尚未运行'}
         self.stop = threading.Event()
         self.preferences = Preferences(store, same_job)
+        self.daily_queue = DailyQueue(store, today, same_job)
         self.career_busy = threading.Lock()
         self.career_progress = {'running': False, 'message': ''}
 
@@ -162,7 +164,7 @@ class Assistant:
             return self.store.read(name) if (self.store.root / name).exists() else copy.deepcopy(default)
 
     def settings(self):
-        return {**DEFAULTS, **self.read(PREFS, {})}
+        return {**DEFAULTS, **self.read(PREFS, {}), 'target': 10}
 
     def save_settings(self, p):
         s = self.settings()
@@ -170,7 +172,7 @@ class Assistant:
             if k in p:
                 if not isinstance(p[k], bool): raise ValueError('开关格式错误')
                 s[k] = p[k]
-        for k, lo, hi in (('hour', 0, 23), ('target', 3, 20)):
+        for k, lo, hi in (('hour', 0, 23),):
             if k in p:
                 value = int(p[k])
                 if not lo <= value <= hi: raise ValueError(k + '超出范围')
@@ -185,22 +187,27 @@ class Assistant:
     def status(self):
         with self.state_lock: progress = dict(self.progress)
         report = self.read(DAILY, {'date': '', 'items': [], 'message': '正在准备今日推荐'})
-        report['items'] = self.pending_jobs(report['items'])
-        # Include the company's other eligible roles under the same card.
-        live=self.pending_jobs()
-        selected=report['items']
-        # Marking a company must not leave stale empty recommendations while other real leads remain.
-        target=self.settings()['target']
-        for job in sorted(live,key=lambda j:-rank_job(j)[1]):
-            if len(group_companies(selected))>=target:break
-            if any(same_company(job,s) for s in selected):continue
-            tier,priority,warnings=rank_job(job)
-            selected.append(dict(job,tier=tier,priority=priority,recommendation_warnings=warnings,
-                recommendation_origin='已有岗位 · 按公司补充未投机会'))
-        report['visible_count'] = len(selected)
-        report['companies']=group_companies(selected+[j for j in live if any(same_company(j,s) for s in selected) and not any(self.same_job(j,s) for s in selected)])
+        daily = self.daily_view()
+        report.update(date=daily['date'], items=daily['items'], companies=daily['companies'],
+                      visible_count=daily['remaining'], daily=daily)
         return {'settings': self.settings(), 'report': report, 'progress': progress,
                 'drafts': self.read(DRAFTS, {'items': []})['items']}
+
+    def daily_view(self):
+        with self.store.lock:
+            jobs = self.pending_jobs()
+            for job in jobs:
+                tier, priority, warnings = rank_job(job)
+                job.update(tier=tier, priority=priority, recommendation_warnings=warnings)
+            day = self.today().isoformat()
+            jobs.sort(key=lambda j: (-j['priority'], hashlib.sha256((day+j['key']).encode()).hexdigest()))
+            return self.daily_queue.view(jobs, self.settings()['profile'],
+                list(self.store.read('投递记录.json')['applications'].values()), self.preferences.excluded)
+
+    def visible_jobs(self, candidates=None):
+        visible = self.daily_view()['items']
+        if candidates is None: return visible
+        return [j for j in self.pending_jobs(candidates) if any(self.same_job(j, v) for v in visible)]
 
     def pending_jobs(self, candidates=None):
         """Use live marks for every queue, including cached reports and aliases."""
@@ -230,8 +237,8 @@ class Assistant:
         plan = self.read(career.FILE, None)
         if plan:
             if plan.get('schema',1)<2:plan['ai']=None
-            plan['current_jobs'] = self.pending_jobs(plan['current_jobs'])
-            for p in plan['projects']: p['jobs_after'] = self.pending_jobs(p['jobs_after'])
+            plan['current_jobs'] = self.visible_jobs(plan['current_jobs'])
+            for p in plan['projects']: p['jobs_after'] = self.visible_jobs(p['jobs_after'])
             plan['projects']=[p for p in plan['projects'] if p.get('jobs_after') and p.get('resume_outline')]
             if not plan['projects']:plan['project_message']='当前没有足够的可投JD支撑项目建议。先补充目标方向的具体岗位，再决定项目；不推荐零岗位覆盖的项目。'
         with self.state_lock: progress = dict(self.career_progress)
@@ -320,6 +327,7 @@ class Assistant:
         errors = []
         try:
             s = self.settings(); date = self.today().isoformat()
+            self.daily_view()  # Freeze the batch before any background report update.
             prefs = self.preferences.read()
             catalog = self.store.read('岗位库.json')
             candidates = copy.deepcopy(catalog['jobs'])
@@ -408,6 +416,7 @@ class Assistant:
                 if companies.get(j['company'],0)>=2: continue
                 selected.append(j); companies[j['company']]=companies.get(j['company'],0)+1
                 if len(selected)>=s['target']: break
+            selected = self.visible_jobs()
             if model_ready and s['profile'] and selected:
                 self.note('本地AI分析简历匹配度与建议版本')
                 try:

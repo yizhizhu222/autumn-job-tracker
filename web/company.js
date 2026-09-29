@@ -5,7 +5,7 @@ function companyCards(jobs){
 }
 function companyCard(group){
  const jobs=group.jobs,channels=[...new Set(jobs.map(j=>j.channel==='email'?'邮件':j.direct?'网申':'待核实'))];
- return `<article class="card company-card" data-company="${esc(group.key)}"><div class="job-top"><div><h3>${esc(group.company)}</h3><p class="small muted">${jobs.length} 个岗位 · ${esc(channels.join(' / '))} · ${esc([...new Set(jobs.map(j=>j.place))].filter(Boolean).join('、'))}</p></div><div class="actions"><button class="primary" data-company-apply="${esc(jobs[0].key)}">查看投递入口</button><button class="quiet" data-exclude="${esc(jobs[0].key)}">不感兴趣</button></div></div><p class="small muted">${jobs.map(j=>esc(j.role)).join(' / ')}</p><details class="job-details company-roles" data-detail="company-${esc(group.key)}"><summary>比较岗位、匹配度与简历</summary>${jobs.map(j=>jobCard(j)).join('')}</details></article>`;
+ return `<article class="card company-card" data-company="${esc(group.key)}"><div class="job-top"><div><h3>${esc(group.company)}</h3><p class="small muted">${jobs.length} 个岗位 · ${esc(channels.join(' / '))} · ${esc([...new Set(jobs.map(j=>j.place))].filter(Boolean).join('、'))}</p></div><div class="actions"><button class="primary" data-company-apply="${esc(jobs[0].key)}">查看投递入口</button><button class="quiet" data-seen="${esc(jobs[0].key)}">今天看完了</button><button class="quiet" data-exclude="${esc(jobs[0].key)}">不感兴趣</button></div></div><p class="small muted">${jobs.map(j=>esc(j.role)).join(' / ')}</p>${jobs.some(j=>j.repeat_reason)?`<p class="small">${esc(jobs.find(j=>j.repeat_reason).repeat_reason)}</p>`:''}<details class="job-details company-roles" data-detail="company-${esc(group.key)}"><summary>比较岗位、匹配度与简历</summary>${jobs.map(j=>jobCard(j)).join('')}</details></article>`;
 }
 function openCompanyApply(key){
  const group=companyGroups.find(g=>g.jobs.some(j=>j.key===key));if(!group)return;
@@ -41,3 +41,9 @@ function careerList(jobs,after=false){
  for(const j of selected){const company=companyGroups.find(g=>g.jobs.some(x=>x.key===j.key));const key=company?.key||normalize(j.company);if(!groups.has(key))groups.set(key,{name:company?.company||j.company,jobs:[]});groups.get(key).jobs.push(j);}
  return [...groups].map(([key,g])=>`<details class="box" data-detail="career-company-${after?'after':'now'}-${esc(key)}"><summary>${esc(g.name)} · ${g.jobs.length}个岗位</summary>${g.jobs.map(j=>careerJob(j,after)).join('')}</details>`).join('');
 }
+
+async function setCompanySeen(key, undo=false){
+ try{await featureCall('/api/day',{op:undo?'undo_seen':'seen',key});await syncAll();render();}
+ catch(e){alert(e.message);}
+}
+document.body.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.seen)setCompanySeen(b.dataset.seen);if(b.dataset.undoSeen)setCompanySeen(b.dataset.undoSeen,true);});

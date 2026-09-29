@@ -115,6 +115,18 @@ class HttpTests(unittest.TestCase):
             urlopen(Request(self.url + '/api/state', headers={'Host': 'foreign.example'}))
         self.assertEqual(ctx.exception.code, 403)
 
+    def test_day_action_requires_auth_and_does_not_record_application(self):
+        self.server.store.change({'op':'add_job','company':'HTTP company','role':'Support','url':'https://example.org/job'})
+        with urlopen(self.url+'/api/state') as r: state=json.load(r)
+        data=json.dumps({'op':'seen','key':state['allowed_keys'][0]}).encode()
+        with self.assertRaises(HTTPError) as ctx: urlopen(Request(self.url+'/api/day',data=data))
+        self.assertEqual(ctx.exception.code,403)
+        req=Request(self.url+'/api/day',data=data,headers={'Origin':self.url,'X-Tracker-Token':state['token'],'Content-Type':'application/json'})
+        with urlopen(req) as r: self.assertTrue(json.load(r)['ok'])
+        with urlopen(self.url+'/api/state') as r: state=json.load(r)
+        self.assertEqual(state['allowed_keys'],[])
+        self.assertEqual(state['ledger']['applications'],{})
+
     def test_frontend_contains_no_embedded_user_catalog(self):
         with urlopen(self.url + '/') as r:
             html = r.read().decode()

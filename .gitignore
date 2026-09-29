@@ -38,3 +38,5 @@ venv/
 **/mail-checks.json
 
 **/career-plan-history.json
+
+**/daily-queue.json
