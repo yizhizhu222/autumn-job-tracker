@@ -186,10 +186,18 @@ class Assistant:
         with self.state_lock: progress = dict(self.progress)
         report = self.read(DAILY, {'date': '', 'items': [], 'message': '正在准备今日推荐'})
         report['items'] = self.pending_jobs(report['items'])
-        report['visible_count'] = len(report['items'])
         # Include the company's other eligible roles under the same card.
         live=self.pending_jobs()
         selected=report['items']
+        # Marking a company must not leave stale empty recommendations while other real leads remain.
+        target=self.settings()['target']
+        for job in sorted(live,key=lambda j:-rank_job(j)[1]):
+            if len(group_companies(selected))>=target:break
+            if any(same_company(job,s) for s in selected):continue
+            tier,priority,warnings=rank_job(job)
+            selected.append(dict(job,tier=tier,priority=priority,recommendation_warnings=warnings,
+                recommendation_origin='已有岗位 · 按公司补充未投机会'))
+        report['visible_count'] = len(selected)
         report['companies']=group_companies(selected+[j for j in live if any(same_company(j,s) for s in selected) and not any(self.same_job(j,s) for s in selected)])
         return {'settings': self.settings(), 'report': report, 'progress': progress,
                 'drafts': self.read(DRAFTS, {'items': []})['items']}
