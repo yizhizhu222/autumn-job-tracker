@@ -17,6 +17,8 @@ import webbrowser
 from recommendations import Assistant
 from preferences import REGIONS
 from startup import Startup
+from companies import same_company, group_companies
+from mailcheck import MailChecks, address
 
 BASE = Path(__file__).resolve().parent
 TZ = timezone(timedelta(hours=8))
@@ -191,6 +193,8 @@ class Store:
                     if key in apps:
                         return {'duplicate': True}
                     raise ValueError('已登记同一岗位，请更新现有记录')
+                if op=='mark' and any(same_company(job,a) for a in apps.values()):
+                    raise ValueError('该公司已投递，请到已投记录跟踪；如确实另投了岗位，可用补录登记事实')
                 d = valid_date(p.get('date', today().isoformat()))
                 evidence = text(p.get('evidence', ''), 2000)
                 if not evidence:
@@ -201,7 +205,15 @@ class Store:
                     evidence_type='本人登记', evidence=evidence, resume_used=used, job_snapshot=job,
                     changes=job.get('resume') if used == job.get('resume', {}).get('path') else None,
                     notes=text(p.get('notes', '')), events=[])
+                a.update(application_channel=p.get('application_channel') or job.get('channel','web'),
+                    applicant_email=address(p.get('applicant_email'),optional=True),
+                    recruiter_email=address(p.get('recruiter_email') or job.get('email'),optional=True),
+                    mail_subject=text(p.get('mail_subject',''),500))
                 apps[key] = a
+            elif op == 'mail_details':
+                if key not in apps:raise ValueError('投递记录不存在')
+                apps[key].update(applicant_email=address(p.get('applicant_email')),recruiter_email=address(p.get('recruiter_email')),
+                    mail_subject=text(p.get('mail_subject',''),500))
             elif op == 'update':
                 if key not in apps or p.get('progress') not in PROGRESS:
                     raise ValueError('记录或进度不正确')
@@ -233,6 +245,7 @@ class Server(ThreadingHTTPServer):
         self.token = secrets.token_urlsafe(32)
         super().__init__(('127.0.0.1', port), Handler)
         self.startup = Startup(directory, self.server_port, BASE)
+        self.mailchecks = MailChecks(self.store)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -261,7 +274,8 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path)
         store = self.server.store
         if path == '/health':
-            return self.send({'app': 'autumn-job-tracker', 'version': '1.3.0', 'data_dir': str(store.root)})
+            return self.send({'app': 'autumn-job-tracker', 'version': '1.4.0', 'data_dir': str(store.root)})
+        if path == '/api/mailbox': return self.send(self.server.mailchecks.status())
         if path == '/api/startup':
             return self.send(self.server.startup.status())
         if path == '/api/career':
@@ -276,11 +290,14 @@ class Handler(BaseHTTPRequestHandler):
                     'token': self.server.token, 'today': today().isoformat(), 'data_dir': str(store.root),
                     'preferences':self.server.assistant.preferences.read(), 'regions':REGIONS,
                     'excluded_keys':[j['key'] for j in store.read(CATALOG)['jobs'] if self.server.assistant.preferences.excluded(j)],
-                    'allowed_keys':[j['key'] for j in self.server.assistant.pending_jobs()]})
+                    'allowed_keys':[j['key'] for j in self.server.assistant.pending_jobs()],
+                    'companies':group_companies(self.server.assistant.pending_jobs())})
         if path == '/':
             return self.send((BASE / 'web' / 'index.html').read_bytes(), mime='text/html; charset=utf-8')
         if path == '/assistant.js':
             return self.send((BASE / 'web' / 'assistant.js').read_bytes(), mime='text/javascript; charset=utf-8')
+        if path == '/company.js':
+            return self.send((BASE / 'web' / 'company.js').read_bytes(), mime='text/javascript; charset=utf-8')
         if path == '/features.js':
             return self.send((BASE / 'web' / 'features.js').read_bytes(), mime='text/javascript; charset=utf-8')
         if path in ('/api/export/ledger', '/' + LEDGER, '/api/export/catalog'):
@@ -298,7 +315,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.host_ok() or self.headers.get('Origin') not in (f'http://127.0.0.1:{port}', f'http://localhost:{port}') or not secrets.compare_digest(self.headers.get('X-Tracker-Token', ''), self.server.token):
             return self.send({'error': '请从本机看板操作'}, 403)
         endpoint = urlparse(self.path).path
-        if endpoint not in ('/api/change', '/api/assistant', '/api/preferences', '/api/startup', '/api/career'):
+        if endpoint not in ('/api/change', '/api/assistant', '/api/preferences', '/api/startup', '/api/career', '/api/mailbox'):
             return self.send({'error': 'Not found'}, 404)
         try:
             n = int(self.headers.get('Content-Length', '0'))
@@ -306,6 +323,12 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('请求内容为空或超过8MB')
             p = json.loads(self.rfile.read(n))
             if not isinstance(p,dict): raise ValueError('请求必须是对象')
+            if endpoint == '/api/mailbox':
+                engine=self.server.mailchecks
+                if p.get('op')=='connect':return self.send(engine.connect(p))
+                if p.get('op')=='disconnect':return self.send(engine.disconnect(p.get('address')))
+                if p.get('op')=='check':return self.send(engine.check(p.get('key')))
+                raise ValueError('未知邮箱操作')
             if endpoint == '/api/preferences': return self.send(self.server.assistant.preferences.change(p))
             if endpoint == '/api/startup': return self.send(self.server.startup.set(p.get('enabled')))
             if endpoint == '/api/career':

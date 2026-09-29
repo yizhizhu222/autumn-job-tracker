@@ -13,13 +13,14 @@ async function refreshAssistant(){
 function renderRecommendations(){
  const r=assistantState?.report,p=assistantState?.progress;
  const items=(r?.items||[]).filter(j=>availableJob(j)&&commonFilter(j));
- $('#intro').innerHTML=`<section class="page-intro"><div class="row"><div><h2>为你精选 <span class="tag gray">${items.length} 个机会</span></h2><p id="aiStatus">${esc(p?.running?p.message:'已排除已投递与不感兴趣的岗位')}</p></div><div class="actions"><button id="generateDaily" ${p?.running||!connected?'disabled':''}>更新推荐</button><button id="aiSettings" class="quiet">AI 设置</button></div></div></section>`;
+ $('#intro').innerHTML=`<section class="page-intro"><div class="row"><div><h2>为你精选 <span class="tag gray">${(r?.companies||[]).filter(g=>g.jobs.some(j=>items.some(x=>x.key===j.key))).length} 家公司</span></h2><p id="aiStatus">${esc(p?.running?p.message:'已排除已投递与不感兴趣的岗位')}</p></div><div class="actions"><button id="generateDaily" ${p?.running||!connected?'disabled':''}>更新推荐</button><button id="aiSettings" class="quiet">AI 设置</button></div></div></section>`;
  $('#generateDaily').onclick=async()=>{try{await assistantCall({op:'generate'});await refreshAssistant();}catch(e){alert(e.message);}};$('#aiSettings').onclick=openAISettings;
  if(!r){$('#content').innerHTML='<div class="empty">正在准备推荐…</div>';return;}
  let html=r.date&&r.date!==today?'<p class="small muted">显示上次推荐，等待今日更新。</p>':'';
  if(r.errors?.length)html+=`<details class="small" data-detail="recommend-errors"><summary>更新说明 · ${r.errors.length} 项</summary>${list(r.errors)}</details>`;
- for(const tier of ['优先投递','可以尝试','待确认']){const group=items.filter(j=>j.tier===tier);if(group.length)html+=`<div class="section-label">${tier}<span>${group.length}</span></div>`+group.map(jobCard).join('');}
- $('#content').innerHTML=html+(items.length?'':'<div class="empty">这批机会已处理完，或不符合当前筛选。<br><span class="small">可以更新推荐，继续发现新的岗位。</span></div>');
+ const groups=(r.companies||[]).map(g=>({...g,jobs:g.jobs.filter(j=>availableJob(j)&&commonFilter(j))})).filter(g=>g.jobs.length);
+ html+=groups.map(companyCard).join('');
+ $('#content').innerHTML=html+(groups.length?'':'<div class="empty">这批机会已处理完，或不符合当前筛选。<br><span class="small">可以更新推荐，继续发现新的岗位。</span></div>');
 }
 async function openAISettings(){
   await refreshAssistant();

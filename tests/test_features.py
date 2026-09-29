@@ -64,11 +64,10 @@ class FeatureTests(unittest.TestCase):
     def test_project_does_not_erase_degree_requirement(self):
         j=self.add();j['requirements']=['硕士及以上，SQL、数据分析']
         plan=career.build_plan('数据科学','Python项目经历',[j])
-        p=next(p for p in plan['projects'] if p['id']=='data')
-        self.assertTrue(p['jobs_after'][0]['hard_conditions'])
-        self.assertIn('SQL',p['jobs_after'][0]['missing'])
+        self.assertEqual(plan['projects'],[])
+        self.assertTrue(plan['current_jobs'][0]['hard_conditions'])
     def test_career_completion_requires_proof_and_never_mutates_resume(self):
-        plan=career.build_plan('数据科学','',[]);self.store.write(career.FILE,plan)
+        plan=career.build_plan('数据科学','',[self.add()]);self.store.write(career.FILE,plan)
         with self.assertRaises(ValueError):self.engine.project_progress({'id':plan['projects'][0]['id'],'status':'completed','evidence':''})
         self.engine.project_progress({'id':plan['projects'][0]['id'],'status':'completed','evidence':'成果保存在本地项目目录，已按四项验收标准实际复现并记录问题。'})
         self.assertEqual(self.engine.settings()['profile'],'')

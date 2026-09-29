@@ -71,29 +71,56 @@ def job_analysis(job, known, projected=()):
             'unknown':['学历/专业、2027届资格、线上面试、薪资和是否仍开放均以最新JD或招聘方回复为准'],
             'basis':'根据JD技能关键词与简历原文交叉核对；提及技能不等于熟练，也不是录用概率'}
 
+ROLE_FAMILIES={
+ 'data':r'数据分析|数据运营|业务分析|经营分析|商业分析|统计',
+ 'support':r'支持|实施|售前|客户成功|项目管理|应用工程|技术培训',
+ 'quality':r'测试|质量|QA|产品助理',
+ 'quantum':r'量子|quantum',
+ 'embedded':r'嵌入式|固件|设备|硬件|单片机'}
+RESUME_OUTLINES={
+ 'data':['基于【真实数据来源】整理【实际数据规模】数据，使用【实际工具】完成清洗、去重和异常检查，保留数据字典与质量报告。','围绕【业务问题】定义【实际指标】，编写可复用查询并制作【实际报表】，通过【抽样核验方式】核对结果。','发现【有证据的结论】，给出【具体建议】及适用限制；报告与复现说明见【成果位置】。'],
+ 'support':['为【实际应用】完成【本人负责的部署与配置】，交付环境检查、操作和回滚说明。','复现并定位【实际故障类型/数量】，以日志验证根因，编写【排查手册/知识库】并进行恢复验证。','组织【真实试用对象】按文档完成【核心任务】，根据【实际反馈】改进交付流程，保留验收记录。'],
+ 'quality':['针对【实际应用/版本】的【业务流程】制定测试计划，设计并执行【实际用例数】条正常、边界与异常用例。','复现【实际发现的问题】，记录版本、步骤与证据；对【修复版本】执行回归并说明剩余风险。','交付需求覆盖表、接口测试集合与质量报告，结果见【成果位置】；不编造缺陷或改善比例。'],
+ 'quantum':['基于【本地模拟器及版本】实现【实际算法/电路】，对照【经典基线】完成可重复实验。','比较【实际参数与实验次数】下的结果，报告误差、资源消耗及限制，明确结果来自模拟器。','制作【实验讲义/排错指南】，记录【实际复现或试学反馈】，成果见【代码与报告位置】。'],
+ 'embedded':['基于【真实设备或模拟环境】完成【数据采集任务】，实现【本人负责的采集/存储/显示部分】。','执行【真实时长】的运行与断连恢复测试，记录【实测丢样率/异常情况】及处理依据。','交付【接线图、测试报告与用户手册】，由【实际复现对象】按步骤验收，说明环境限制。']}
+
 def build_plan(major, profile, jobs):
-    ev={k:v for k,v in evidence(profile).items() if v}; known=set(ev)
-    has_projects=bool(re.search(r'项目经历|项目经验|实习经历|工作经历',profile)) and len(profile.strip())>180
+    ev={k:v for k,v in evidence(profile).items() if v};known=set(ev)
     analyses=[job_analysis(j,known) for j in jobs]
     analyses.sort(key=lambda x:(bool(x['hard_conditions']),-len(x['matched']),len(x['missing'])))
-    projects=[]
+    projects=[];rejected=0
     for template in PROJECTS:
-        p=copy.deepcopy(template)
-        linked=[job_analysis(j,known,p['skills']) for j in jobs]
-        linked=[j for j in linked if j['gained']]
-        linked.sort(key=lambda x:(bool(x['hard_conditions']),-len(x['gained']),len(x['missing'])))
+        p=copy.deepcopy(template);linked=[]
+        for job in jobs:
+            jd='\n'.join(job.get('requirements',[])+job.get('duties',[]))
+            scope=str(job.get('role',''))+(' '+str(job.get('group','')) if p['id']=='quantum' else '')
+            if len(jd.strip())<16 or not str(job.get('source') or job.get('apply_url','')).startswith(('https://','http://')):continue
+            if not re.search(ROLE_FAMILIES[p['id']],scope,re.I):continue
+            a=job_analysis(job,known,p['skills'])
+            matched_skills=set(a['evidence'])&set(p['skills'])
+            # Generic communication/document mentions alone cannot justify a project.
+            if len(matched_skills)<2 or not matched_skills-{'沟通','文档','项目管理'}:continue
+            if a['hard_conditions'] or not a['gained']:rejected+=1;continue
+            a['project_skill_evidence']={k:a['evidence'][k] for k in matched_skills}
+            linked.append(a)
+        if not linked:continue
+        linked.sort(key=lambda x:(-len(x['gained']),len(x['missing'])))
         relevant=any(m in major for m in p['majors'])
-        if not relevant and not linked: continue
-        p.update(covered_jobs=len(linked),covered_companies=len({j['company'] for j in linked}),sample_size=len(jobs),jobs_after=linked[:8],
-                 selection_reason=('与填写专业相关；' if relevant else '岗位库中存在相关技能需求；')+f'当前可选岗位中有{len(linked)}条JD明确提到该项目可补充的技能。',
-                 score=(10 if relevant else 0)+min(len(linked),20),status='planned',completion_evidence='')
+        companies=len({j['company'] for j in linked})
+        missing=set().union(*(set(j['gained']) for j in linked))
+        p.update(covered_jobs=len(linked),covered_companies=companies,sample_size=len(jobs),jobs_after=linked[:8],
+            direction=' / '.join(p['roles'][:2]),target_gap='、'.join(sorted(missing)),
+            selection_reason=f'目标方向有{len(linked)}条具体JD、{companies}家公司；项目用来补充'+ '、'.join(sorted(missing))+'的可展示证据。',
+            score=companies*10+len(linked)*3+len(missing)+(2 if relevant else 0)+(3 if p['id'] in ('support','quality','data') else 0),
+            status='planned',completion_evidence='',resume_outline=RESUME_OUTLINES[p['id']],
+            resume_heading=p['title']+'｜个人项目｜【实际起止时间】',
+            next_step='先对照下方JD确认目标方向，完成交付物与验收后，在原简历项目经历中加入或替换一项，控制在3条以内。',
+            demand_map=[{'skill':skill,'jobs':sum(skill in j['project_skill_evidence'] for j in linked),'evidence':next(j['project_skill_evidence'][skill] for j in linked if skill in j['project_skill_evidence'])} for skill in sorted(missing)])
         projects.append(p)
-    if not projects:
-        # A major alone is not evidence of acquired skills. Offer transferable work with explicit limits.
-        for template in PROJECTS[:3]:
-            p=copy.deepcopy(template);p.update(covered_jobs=0,covered_companies=0,sample_size=len(jobs),jobs_after=[],score=0,status='planned',completion_evidence='',selection_reason='暂缺该专业的岗位样本；作为跨专业通用项目备选，需结合目标JD确认。');projects.append(p)
     projects.sort(key=lambda p:-p['score'])
-    return {'major':major,'generated_at':datetime.now().isoformat(),'profile_hash':hashlib.sha256(profile.encode()).hexdigest(),
-      'summary':'已有项目经历，可优先补证据与岗位缺口。' if has_projects else '尚未识别到充分项目经历。先做一个可验收项目；下列岗位仅供探索，不能认为已经符合要求。',
-      'evidence':ev,'warnings':['简历未提到的技能记为待补证据，不直接断言你不会。','项目覆盖数只统计本地岗位库中的JD，不能推断整个招聘市场。','完成项目只能补充技能证据，学历、届别、工作年限等硬条件仍需满足。'],
-      'current_jobs':analyses[:12],'sample_size':len(jobs),'projects':projects[:3],'ai':None,'ai_status':'基础分析已完成，未调用模型'}
+    return {'schema':2,'major':major,'generated_at':datetime.now().isoformat(),'profile_hash':hashlib.sha256(profile.encode()).hexdigest(),
+      'summary':'先选择有真实需求、硬条件可争取的方向，再做能补齐证据的项目。',
+      'evidence':ev,'warnings':['未提及的技能视为缺少简历证据，不断言你不会。','项目优先级依据当前JD数量、技能缺口与硬条件；没有录用结果数据，不能计算上岸率。','模板中的【占位内容】必须用实际成果替换，未完成的项目不能写成经历。'],
+      'current_jobs':analyses[:12],'sample_size':len(jobs),'projects':projects[:3],
+      'project_message':'' if projects else '当前没有足够的适合JD来支持新项目：可能是需求不明确、硬门槛不符，或已有技能已覆盖。先补具体岗位和已有成果证据，不推荐零覆盖项目。',
+      'ai':None,'ai_status':'基础分析已完成，未调用模型'}

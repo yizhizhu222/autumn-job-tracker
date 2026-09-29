@@ -3,6 +3,7 @@ import hashlib
 import re
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
+from companies import same_company, company_key
 
 FILE = 'job-preferences.json'
 REGIONS = {
@@ -63,6 +64,7 @@ class Preferences:
         for rule in p['rules']:
             if not rule.get('active', True): continue
             if rule['kind']=='job' and self.same_job(job,rule['job']): return True
+            if rule['kind']=='company' and same_company(job,rule['job']):return True
             if rule['kind']=='platform' and platform(job)[0]==rule['value']: return True
             if rule['kind']=='role' and rule['value'].casefold() in str(job.get('role','')).casefold(): return True
         return False
@@ -84,14 +86,14 @@ class Preferences:
                 rule['active']=False
             elif op=='exclude':
                 kind=data.get('kind'); job=next((j for j in self.store.read('岗位库.json')['jobs'] if j['key']==data.get('key')),None)
-                if kind not in ('job','platform','role'): raise ValueError('请选择岗位、平台或岗位关键词')
+                if kind not in ('job','platform','role','company'): raise ValueError('请选择公司、岗位、平台或岗位关键词')
                 if kind!='role' and job is None: raise ValueError('岗位不存在')
-                value = job['key'] if kind=='job' else platform(job)[0] if kind=='platform' else str(data.get('value','')).strip()[:80]
+                value = company_key(job['company']) if kind=='company' else job['key'] if kind=='job' else platform(job)[0] if kind=='platform' else str(data.get('value','')).strip()[:80]
                 if not value: raise ValueError('缺少可记录的内容')
                 rid=hashlib.sha256((kind+'|'+value.casefold()).encode()).hexdigest()[:20]
                 rule={'id':rid,'kind':kind,'value':value,'active':True,'reason':str(data.get('reason',''))[:500], 'at':datetime.now(timezone(timedelta(hours=8))).isoformat(),
-                      'label':job['company']+' · '+job['role'] if kind=='job' else platform(job)[1] if kind=='platform' else value}
-                if kind=='job': rule['job']={k:job.get(k) for k in ('key','aliases','company','role')}
+                      'label':job['company'] if kind=='company' else job['company']+' · '+job['role'] if kind=='job' else platform(job)[1] if kind=='platform' else value}
+                if kind in ('job','company'): rule['job']={k:job.get(k) for k in ('key','aliases','company','role','canonical_company','company_aliases')}
                 p['rules']=[r for r in p['rules'] if r['id']!=rid]+[rule]
             else: raise ValueError('未知偏好操作')
             self.store.write(FILE,p)

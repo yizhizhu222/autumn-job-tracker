@@ -34,3 +34,7 @@ venv/
 
 **/job-preferences.json
 **/career-plan.json
+
+**/mail-checks.json
+
+**/career-plan-history.json

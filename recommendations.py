@@ -15,6 +15,7 @@ from urllib.error import URLError
 import xml.etree.ElementTree as ET
 from preferences import Preferences
 import career
+from companies import same_company, group_companies
 
 PREFS = 'assistant-settings.json'
 DAILY = 'daily-recommendations.json'
@@ -186,6 +187,10 @@ class Assistant:
         report = self.read(DAILY, {'date': '', 'items': [], 'message': '正在准备今日推荐'})
         report['items'] = self.pending_jobs(report['items'])
         report['visible_count'] = len(report['items'])
+        # Include the company's other eligible roles under the same card.
+        live=self.pending_jobs()
+        selected=report['items']
+        report['companies']=group_companies(selected+[j for j in live if any(same_company(j,s) for s in selected) and not any(self.same_job(j,s) for s in selected)])
         return {'settings': self.settings(), 'report': report, 'progress': progress,
                 'drafts': self.read(DRAFTS, {'items': []})['items']}
 
@@ -201,7 +206,7 @@ class Assistant:
                 if current is None:
                     current = next((j for j in catalog if self.same_job(j,job)), None)
                 if current is None or not self.preferences.allowed(current,prefs): continue
-                if any(self.same_job(current,a) or self.same_job(job,a) for a in applied): continue
+                if any(same_company(current,a) or self.same_job(job,a) for a in applied): continue
                 if any(self.same_job(current,j) for j in result): continue
                 result.append({**job, 'key':current['key'], 'aliases':current.get('aliases',[])})
             return result
@@ -216,8 +221,11 @@ class Assistant:
     def career_status(self):
         plan = self.read(career.FILE, None)
         if plan:
+            if plan.get('schema',1)<2:plan['ai']=None
             plan['current_jobs'] = self.pending_jobs(plan['current_jobs'])
             for p in plan['projects']: p['jobs_after'] = self.pending_jobs(p['jobs_after'])
+            plan['projects']=[p for p in plan['projects'] if p.get('jobs_after') and p.get('resume_outline')]
+            if not plan['projects']:plan['project_message']='当前没有足够的可投JD支撑项目建议。先补充目标方向的具体岗位，再决定项目；不推荐零岗位覆盖的项目。'
         with self.state_lock: progress = dict(self.career_progress)
         return {'plan': plan, 'progress': progress}
 
@@ -229,11 +237,13 @@ class Assistant:
             s=self.settings()
             profile=clipped(data.get('profile',s['profile']),24000)
             with self.store.lock:
-                applied=list(self.store.read('投递记录.json')['applications'].values())
-                prefs=self.preferences.read()
-                jobs=[j for j in self.store.read('岗位库.json')['jobs'] if self.preferences.allowed(j,prefs) and not any(self.same_job(j,a) for a in applied)]
+                jobs=self.pending_jobs()
                 plan=career.build_plan(major,profile,jobs)
                 old=self.read(career.FILE,{})
+                if old:
+                    history=self.read('career-plan-history.json',{'items':[]})
+                    if not any(x.get('generated_at')==old.get('generated_at') for x in history['items']):
+                        history['items'].append(old);self.store.write('career-plan-history.json',history)
                 # Completion belongs to this candidate, not a different profile or major.
                 if old.get('profile_hash')==plan['profile_hash'] and old.get('major')==major:
                     for p in plan['projects']:
@@ -253,6 +263,7 @@ class Assistant:
             if not self.model_status()['available']: raise ValueError('本地模型尚未就绪，当前为规则分析与项目方案')
             result=ai_json(model,'分析简历的证据缺口和项目实施建议。项目均为计划，不是已完成经历。只输出 {"summary":"简历诊断","improvements":["原文证据不足之处与补充方式"],"project_advice":["针对输入项目的具体实施建议"]}。禁止增加候选人经历、招聘岗位、招聘统计或录用承诺。',{'major':plan['major'],'resume':profile,'evidence':plan['evidence'],'projects':[{k:p[k] for k in ('title','problem','deliverables','acceptance')} for p in plan['projects']]})
             ai={'summary':clipped(result.get('summary'),2000),'improvements':strings(result.get('improvements')),'project_advice':strings(result.get('project_advice'))}
+            if not plan['projects']:ai['project_advice']=[]
             status='本地AI分析已完成；模型建议需要人工核对'
         except (OSError,ValueError,KeyError,TypeError) as e:
             ai=None;status='本地AI暂不可用，保留基础分析与完整项目方案'
@@ -310,7 +321,7 @@ class Assistant:
             initial=[]
             for job in candidates:
                 if not self.preferences.allowed(job,prefs): continue
-                if any(self.same_job(job,a) for a in applied_now): continue
+                if any(same_company(job,a) for a in applied_now): continue
                 tier,priority,warnings=rank_job(job)
                 initial.append(dict(job,tier=tier,priority=priority,recommendation_warnings=warnings,
                     application_mode='网页手动提交' if job.get('direct') else '先核实入口',
@@ -374,7 +385,7 @@ class Assistant:
             pool = []
             for j in candidates:
                 if not self.preferences.allowed(j,self.preferences.read()): continue
-                if any(self.same_job(j,a) for a in applied): continue
+                if any(same_company(j,a) for a in applied): continue
                 tier, priority, warnings = rank_job(j)
                 j.update(tier=tier, priority=priority, recommendation_warnings=warnings,
                          application_mode='网页手动提交' if j.get('direct') else '邮件投递' if j.get('channel')=='email' else '先核实入口',
