@@ -42,3 +42,7 @@ venv/
 **/daily-queue.json
 
 **/application-feedback.json
+
+/build/
+*.spec
+**/.tracker.lock

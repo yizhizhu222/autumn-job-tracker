@@ -91,4 +91,7 @@ def diverse_hits(hits, limit=18):
     out=[]
     for kind,quota in (('official',9),('university',4),('platform',3),('wechat',2)):
         out.extend(buckets[kind][:quota])
+    for hit in hits:
+        if len(out)>=limit:break
+        if hit not in out:out.append(hit)
     return out[:limit]

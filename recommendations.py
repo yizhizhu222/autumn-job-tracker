@@ -1,5 +1,9 @@
 """Daily recommendations, public search and private Ollama inference."""
 import copy
+import base64
+import io
+import os
+import time
 import hashlib
 import ipaddress
 import json
@@ -15,9 +19,12 @@ from urllib.error import URLError
 import xml.etree.ElementTree as ET
 from preferences import Preferences
 import career
-from opportunity_quality import assess, search_queries, diverse_hits, source_info, host
+from opportunity_quality import assess, search_queries, diverse_hits, source_info, host, OFFICIAL, belongs
 from daily_queue import DailyQueue
 from companies import same_company, group_companies
+from crawler import Fetcher
+
+FETCHER=Fetcher()
 
 PREFS = 'assistant-settings.json'
 DAILY = 'daily-recommendations.json'
@@ -49,13 +56,7 @@ class PublicRedirect(HTTPRedirectHandler):
 
 
 def fetch_public(url):
-    public_url(url)
-    request = Request(url, headers={'User-Agent': 'Mozilla/5.0 (compatible; AutumnJobTracker/1.1)'})
-    with build_opener(PublicRedirect()).open(request, timeout=18) as r:
-        raw = r.read(1_500_001)
-        if len(raw) > 1_500_000:
-            raise ValueError('页面过大，保留入口供人工查看')
-        return raw.decode(r.headers.get_content_charset() or 'utf-8', errors='replace')
+    return FETCHER.fetch(url,public_url,PublicRedirect)
 
 
 class PageText(HTMLParser):
@@ -246,6 +247,45 @@ class Assistant:
         except (OSError, ValueError, KeyError):
             return {'available': False, 'models': [], 'message': '本地 Ollama 未启动，请先运行本地AI启动脚本'}
 
+    def upload_resume(self,p):
+        name=clipped(p.get('name'),180)
+        suffix=Path(name).suffix.lower()
+        if suffix not in ('.pdf','.txt','.md'):raise ValueError('请选择PDF或UTF-8文本简历')
+        encoded=p.get('data','')
+        if not isinstance(encoded,str) or len(encoded)>7_000_000:raise ValueError('简历文件不能超过5MB')
+        try:raw=base64.b64decode(encoded,validate=True)
+        except (ValueError,TypeError):raise ValueError('文件数据无效') from None
+        if not raw or len(raw)>5_000_000:raise ValueError('请选择不超过5MB的简历文件')
+        if suffix=='.pdf':
+            if not raw.startswith(b'%PDF-'):raise ValueError('文件不是有效的PDF')
+            try:
+                import pypdf
+                pdf=pypdf.PdfReader(io.BytesIO(raw))
+                if pdf.is_encrypted or len(pdf.pages)>30:raise ValueError('请使用未加密且不超过30页的简历')
+                profile='\n'.join(page.extract_text() or '' for page in pdf.pages)[:24000]
+            except ImportError:raise ValueError('源码版请先安装requirements-ai.txt中的依赖；Windows下载版已包含PDF支持') from None
+            except Exception as error:raise ValueError('PDF无法读取，请检查是否损坏、加密或页数过多') from error
+        else:
+            try:profile=raw.decode('utf-8-sig')[:24000]
+            except UnicodeError:raise ValueError('请将文本文件另存为UTF-8编码') from None
+        digest=hashlib.sha256(raw).hexdigest()
+        relative='resumes/resume-'+digest[:24]+suffix
+        with self.store.lock:
+            folder=self.store.root/'resumes';folder.mkdir(exist_ok=True)
+            path=self.store.root/relative
+            if not path.exists():
+                tmp=path.with_suffix(suffix+'.tmp')
+                with tmp.open('wb') as out:out.write(raw);out.flush();os.fsync(out.fileno())
+                os.replace(tmp,path)
+            elif hashlib.sha256(path.read_bytes()).hexdigest()!=digest:raise ValueError('归档文件校验不一致，未覆盖旧文件')
+            self.save_settings({'resume_path':relative,'profile':profile})
+            catalog=self.store.read('岗位库.json')
+            originals=catalog.setdefault('originals',{})
+            if not any(v.get('sha256')==digest for v in originals.values()):
+                originals[name+' · '+digest[:8]]={'path':relative,'sha256':digest,'name':name}
+                self.store.write('岗位库.json',catalog)
+        return {'path':relative,'name':name,'text_length':len(profile),'message':'简历已归档，可在AI设置查看正文。' if profile.strip() else '文件已归档，但未识别到文字。请在AI设置粘贴简历正文。'}
+
     def career_status(self):
         plan = self.read(career.FILE, None)
         if plan:
@@ -331,13 +371,14 @@ class Assistant:
             try:
                 from datetime import timezone, timedelta
                 s = self.settings()
-                if s['enabled'] and datetime.now(timezone(timedelta(hours=8))).hour >= s['hour']:
+                if s['enabled'] and s['profile'].strip() and datetime.now(timezone(timedelta(hours=8))).hour >= s['hour']:
                     self.start()
             except (OSError, ValueError): pass
             self.stop.wait(30)
 
     def run(self):
         errors = []
+        started=time.monotonic()
         try:
             s = self.settings(); date = self.today().isoformat()
             self.daily_view()  # Freeze the batch before any background report update.
@@ -361,7 +402,9 @@ class Assistant:
                     'message':'已准备现有未投备选，正在联网更新及分析。','errors':[],'new_count':0})
             model_ready = self.model_status()['available']
             new_jobs = []
-            if s['search_enabled']:
+            if s['search_enabled'] and not model_ready:
+                errors.append('本地模型尚未就绪，本次未发起无效的页面抓取。请安装Ollama并运行setup-ai.cmd，然后点击更新岗位信息。')
+            if s['search_enabled'] and model_ready:
                 self.note('联网检索公开招聘网页')
                 # Queries contain job preferences only, never resume text or contact details.
                 year_match=re.search(r'20\d{2}',s['preferences'])
@@ -372,6 +415,7 @@ class Assistant:
                 queries = search_queries(year,focus,region.strip())
                 found = {}
                 for query in queries:
+                    if self.stop.is_set() or time.monotonic()-started>420:break
                     try:
                         for hit in search_public(query): found.setdefault(hit['url'], hit)
                     except (OSError, ValueError, ET.ParseError): errors.append('一个公开搜索请求失败，已保留已有岗位')
@@ -381,11 +425,32 @@ class Assistant:
                     if old.get('source'): found.setdefault(old['source'],{'title':old['company'],'url':old['source'],'snippet':''})
                 crawl=diverse_hits(list(found.values()))
                 for index, hit in enumerate(crawl):
+                    if self.stop.is_set() or time.monotonic()-started>420:
+                        errors.append('本轮核查达到时间预算；已保存可核实内容，剩余来源下次继续')
+                        break
                     if self.preferences.excluded({'source':hit['url']},self.preferences.read()): continue
                     self.note(f'核对招聘网页 {index + 1}/{len(crawl)}')
                     try:
                         raw_page=fetch_public(hit['url'])
                         body = page_text(raw_page)
+                        # Verified directory pages also lead to jobs; do not require a JD on the directory itself.
+                        from source_links import recruitment_links
+                        company_hint=hit.get('company','')
+                        if not company_hint:
+                            company_hint=next((company for domain,(company,_) in OFFICIAL.items() if belongs(host(hit['url']),domain)),'')
+                        hint={'source':hit['url'],'company':company_hint,'source_proof':hit.get('source_proof')}
+                        if source_info(hint)['verified']:
+                            for link in recruitment_links(raw_page,hit['url'],company_hint,date):
+                                if link['url'] not in found and len(crawl)<26:
+                                    found[link['url']]=link;crawl.append(link)
+                        known=[old for old in candidates if old.get('source')==hit['url']]
+                        if len(known)==1 and re.search(r'该职位已下线|该岗位已关闭|此职位已停止招聘|职位不存在',body[:2000]):
+                            with self.store.lock:
+                                latest=self.store.read('岗位库.json')
+                                for old in latest['jobs']:
+                                    if self.same_job(old,known[0]):old.update(status='closed',verified_on=date,closure_evidence=body[:1000])
+                                self.store.write('岗位库.json',latest)
+                            continue
                         if not model_ready: continue
                         result = ai_json(s['model'], '从网页提取一个真实具体招聘岗位；目录页、新闻、搜索结果或缺岗位要求时返回{"job":null}。输出{"job":{"company":"原文公司名","role":"原文岗位名","group":"方向","duties":["逐字引用原文"],"requirements":["逐字引用原文"],"place":"地点或待确认","salary":"原文薪资或待确认","online":"原文面试方式或待确认","evidence":"原文连续引用20到120字","closed":false}}。证据必须包含岗位名。', {'today': date, 'page': body[:10000]})
                         j = result.get('job')
@@ -405,7 +470,7 @@ class Assistant:
                         # A fetched article is not automatically an application form.
                         j['direct']=bool(re.search(r'<form\b|投递简历|立即投递|立即申请|申请职位',raw_page,re.I)) and 'mp.weixin.qq.com' not in host(hit['url'])
                         j['channel']='web' if j['direct'] else 'unverified'
-                        if hit.get('source_proof') and hit.get('company')==company: j['source_proof']=hit['source_proof']
+                        if hit.get('source_proof') and (hit.get('company')==company or company in hit.get('publisher_label','')): j['source_proof']=hit['source_proof']
                         # Follow explicit recruiting links from a verified university/company source.
                         from source_links import recruitment_links
                         if source_info(j)['verified']:
@@ -422,17 +487,23 @@ class Assistant:
                         if salary and float(salary.group(1))>4 and re.search(r'固定月薪|基本月薪|底薪',j['salary']): j['salary_min_confirmed']=True
                         # Reuse a real existing resume with the best explicit JD overlap.
                         best=None
-                        for base in candidates:
-                            path=base.get('resume',{}).get('path','')
+                        resumes={base.get('resume',{}).get('path',''):base.get('resume',{}) for base in candidates}
+                        for original in catalog.get('originals',{}).values():
+                            resumes.setdefault(original.get('path',''),{'path':original.get('path',''),'base':original.get('name','个人简历')})
+                        if s['resume_path']:resumes.setdefault(s['resume_path'],{'path':s['resume_path'],'base':'已导入简历'})
+                        for path,resume in resumes.items():
                             try:
                                 if path and self.resume_file(path):
-                                    score=len({k for k,v in career.evidence(facts).items() if v} & {k for k,v in career.evidence(' '.join(base.get('requirements',[])+base.get('duties',[]))).items() if v})
-                                    if best is None or score>best[0]:best=(score,base)
+                                    text=self.extract_resume(path)
+                                    score=len({k for k,v in career.evidence(facts).items() if v} & {k for k,v in career.evidence(text).items() if v})
+                                    if best is None or score>best[0]:best=(score,resume)
                             except (ValueError,OSError):pass
                         if best and best[0]>0:
-                            j['resume']=copy.deepcopy(best[1]['resume']);j['resume_reason']='按已有底稿与JD技能交集选取，请核对该文件的真实经历。'
+                            j['resume']=copy.deepcopy(best[1]);j['resume_reason']='按实际简历正文与JD技能交集选取；原文件没有修改。'
                         if self.preferences.allowed(j,self.preferences.read()) and not any(self.same_job(j, old) and j['source']==old.get('source') for old in new_jobs): new_jobs.append(j)
-                    except (OSError, ValueError, KeyError, TypeError): errors.append('部分网页或模型响应未能核实，未当作可投岗位')
+                    except (OSError, ValueError, KeyError, TypeError) as error:
+                        reason=str(error) if isinstance(error,ValueError) else type(error).__name__
+                        errors.append(host(hit['url'])+'：'+reason[:180]+'；未当作可投岗位')
                 if not model_ready: errors.append('本地模型尚未就绪；本次采用已有岗位，不把搜索摘要当作具体岗位')
             candidates = new_jobs + candidates
             with self.store.lock:
@@ -518,7 +589,8 @@ class Assistant:
         if path.suffix.lower()!='.pdf': raise ValueError('目前支持PDF或TXT简历')
         try: import pypdf
         except ImportError: raise ValueError('读取PDF需要安装 pypdf，或直接粘贴正文')
-        content='\n'.join(page.extract_text() or '' for page in pypdf.PdfReader(path).pages)[:24000]
+        try:content='\n'.join(page.extract_text() or '' for page in pypdf.PdfReader(path).pages)[:24000]
+        except Exception as error:raise ValueError('PDF无法读取，请检查文件完整性或使用未加密的版本') from error
         if not content.strip(): raise ValueError('PDF未识别出文字，请粘贴正文')
         return content
 

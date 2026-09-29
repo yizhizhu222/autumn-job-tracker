@@ -14,6 +14,9 @@ from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 import webbrowser
+import sys
+from urllib.request import build_opener, ProxyHandler
+from data_lock import DataLock
 from recommendations import Assistant
 from preferences import REGIONS
 from startup import Startup
@@ -22,6 +25,8 @@ from mailcheck import MailChecks, address
 from application_feedback import Feedback
 
 BASE = Path(__file__).resolve().parent
+INSTALL = Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else BASE
+VERSION = '1.7.0'
 TZ = timezone(timedelta(hours=8))
 PROGRESS = ('等待回复', '自动回执', '补材料', '测评邀请', '面试邀请', '面试中', '录用', '拒绝', '撤回')
 CATALOG = '岗位库.json'
@@ -241,6 +246,13 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, directory, port=18728):
+        self.data_lock = DataLock(directory)
+        try:self.initialize(directory,port)
+        except Exception:
+            self.data_lock.close()
+            raise
+
+    def initialize(self,directory,port):
         self.store = Store(directory)
         self.assistant = Assistant(self.store, today, same_job)
         self.feedback = Feedback(self.store,today,self.assistant)
@@ -248,6 +260,10 @@ class Server(ThreadingHTTPServer):
         super().__init__(('127.0.0.1', port), Handler)
         self.startup = Startup(directory, self.server_port, BASE)
         self.mailchecks = MailChecks(self.store)
+
+    def server_close(self):
+        super().server_close()
+        self.data_lock.close()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -276,7 +292,7 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path)
         store = self.server.store
         if path == '/health':
-            return self.send({'app': 'autumn-job-tracker', 'version': '1.6.0', 'data_dir': str(store.root)})
+            return self.send({'app': 'autumn-job-tracker', 'version': VERSION, 'data_dir': str(store.root)})
         if path == '/api/mailbox': return self.send(self.server.mailchecks.status())
         if path == '/api/startup':
             return self.send(self.server.startup.status())
@@ -299,6 +315,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send((BASE / 'web' / 'index.html').read_bytes(), mime='text/html; charset=utf-8')
         if path == '/assistant.js':
             return self.send((BASE / 'web' / 'assistant.js').read_bytes(), mime='text/javascript; charset=utf-8')
+        if path == '/onboarding.js':
+            return self.send((BASE / 'web' / 'onboarding.js').read_bytes(), mime='text/javascript; charset=utf-8')
         if path == '/feedback.js':
             return self.send((BASE / 'web' / 'feedback.js').read_bytes(), mime='text/javascript; charset=utf-8')
         if path == '/company.js':
@@ -350,6 +368,7 @@ class Handler(BaseHTTPRequestHandler):
                 engine = self.server.assistant
                 op = p.get('op')
                 if op == 'settings': result = {'settings': engine.save_settings(p)}
+                elif op == 'upload_resume': result = engine.upload_resume(p)
                 elif op == 'generate': result = engine.start(force=True)
                 elif op == 'extract': result = {'text': engine.extract_resume(p.get('path', ''))}
                 elif op == 'draft': result = {'draft': engine.draft(p.get('key'))}
@@ -371,21 +390,36 @@ def main():
     parser.add_argument('--data-dir', type=Path, help='Existing data folder, or a new empty folder')
     parser.add_argument('--port', type=int, default=18728)
     parser.add_argument('--open', action='store_true', help='Open the dashboard in your browser')
+    parser.add_argument('--no-browser', action='store_true', help='Start in the background without opening a browser')
     args = parser.parse_args()
-    config_path = BASE / 'config.json'
-    config = json.loads(config_path.read_text(encoding='utf-8-sig')) if config_path.exists() else {}
-    directory = args.data_dir or Path(config.get('data_dir', str(BASE / 'data')))
+    config_path = INSTALL / 'config.json'
+    try:
+        config = json.loads(config_path.read_text(encoding='utf-8-sig')) if config_path.exists() else {}
+        directory = args.data_dir or Path(config.get('data_dir', str(INSTALL / 'data')))
+    except (OSError,ValueError,TypeError,AttributeError) as error:parser.exit(1,f'Please check config.json: {error}\n')
     if not directory.is_absolute():
-        directory = BASE / directory
+        directory = INSTALL / directory
     if not 1 <= args.port <= 65535:
         parser.error('port must be between 1 and 65535')
+    url = f'http://127.0.0.1:{args.port}/'
+    try:
+        with build_opener(ProxyHandler({})).open(url+'health',timeout=2) as response:running=json.load(response)
+    except (OSError,ValueError):running=None
+    if isinstance(running,dict) and running.get('app')=='autumn-job-tracker':
+        if Path(running.get('data_dir','')).resolve()!=directory.resolve():
+            parser.exit(1,'This port is already using a different data folder. Close that app or choose another --port.\n')
+        if running.get('version')!=VERSION:
+            parser.exit(1,'An older tracker is running. Close its window before starting the new version.\n')
+        if args.open and not args.no_browser:webbrowser.open(url)
+        print('Tracker is already running: '+url)
+        return
     try:
         server = Server(directory, args.port)
     except (OSError, ValueError) as e:
         parser.exit(1, f'Cannot start tracker: {e}\n')
     url = f'http://127.0.0.1:{server.server_port}/'
     print(f'Autumn Job Tracker: {url}\nData: {server.store.root}\nCtrl+C to stop.', flush=True)
-    if args.open:
+    if args.open and not args.no_browser:
         webbrowser.open(url)
     threading.Thread(target=server.assistant.scheduler, daemon=True).start()
     try:

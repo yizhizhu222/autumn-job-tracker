@@ -38,6 +38,8 @@ class Startup:
         import hashlib
         return 'AutumnJobTracker-'+hashlib.sha256(str(self.directory).casefold().encode()).hexdigest()[:12]
     def command(self):
+        if getattr(sys,'frozen',False):
+            return subprocess.list2cmdline([sys.executable,'--data-dir',str(self.directory),'--port',str(self.port),'--no-browser'])
         python=Path(sys.executable).with_name('pythonw.exe')
         if not python.exists(): python=Path(sys.executable)
         return subprocess.list2cmdline([str(python),str(self.base/'app.py'),'--data-dir',str(self.directory),'--port',str(self.port)])
