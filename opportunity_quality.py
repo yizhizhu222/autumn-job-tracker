@@ -57,27 +57,30 @@ def assess(job, profile, on, resume_ready=False):
         if date.fromisoformat(str(job.get('deadline',''))[:10])<on: blockers.append('申请截止日期已过')
     except ValueError: pass
     blockers.extend(a['hard_conditions'])
-    if not re.search(r'2027|27届',facts): unknown.append('2027届资格待确认')
+    if not re.search(r'2027|27届',facts) or re.search(r'(2027|27届).{0,12}待确认',facts): unknown.append('2027届资格待确认')
     if '本科' not in facts: unknown.append('本科学历资格待确认')
     if not job.get('online_confirmed'): unknown.append('线上面试待确认')
     quantum='量子' in str(job.get('group',''))+job.get('role','')
     if not quantum and not job.get('salary_min_confirmed'): unknown.append('固定月薪4000元以上待确认')
     if not resume_ready: unknown.append('尚未配好本地简历文件')
-    if not a['matched']: blockers.append('简历中尚无对应岗位技能证据')
+    if not a['matched']: unknown.append('探索方向：简历暂未展示对应技能，可先查看项目准备方案')
     ratio=len(a['matched'])/max(1,len(a['evidence']))
-    ready=len(a['matched'])>=2 and ratio>=0.6 and not blockers and not unknown and bool(job.get('direct')) and job.get('channel')!='email' and bool(host(job.get('apply_url')))
-    recommended=not blockers and len(a['matched'])>=2 and ratio>=0.5
+    # Missing interview/salary details and skill gaps are visible questions, not rejection.
+    # A direct link describes the application channel, not confirmed eligibility.
+    ready=bool(a['matched']) and not blockers and resume_ready and bool(job.get('direct')) and job.get('channel')!='email' and bool(host(job.get('apply_url')))
+    recommended=not blockers
     return {'source':source,'blockers':blockers,'unknown':unknown,'ready':ready,'recommended':recommended,
             'matched':[{'skill':k,'resume':ev[k],'jd':a['evidence'][k]} for k in a['matched']],
             'missing':a['missing'],'score':len(a['matched'])*10+int(ratio*20),
-            'reason':'简历与岗位共同涉及'+ '、'.join(a['matched']) if a['matched'] else '尚缺个人匹配证据'}
+            'reason':'简历与岗位共同涉及'+ '、'.join(a['matched']) if a['matched'] else '探索推荐：岗位真实，先用项目补充技能证据；当前匹配较低'}
 
 def search_queries(year, focus, region):
-    return [f'{year} 量子计算 校园招聘 本科 官网 {region}',
-            f'{year} 秋招 {focus} 官网 招聘 {region}',
-            f'{year} 校园招聘 {focus} site:edu.cn {region}',
+    roles=focus.split()
+    return [f'{year} 量子计算 校园招聘 本科 {region}',
+            *[f'{year} 校园招聘 {role} 官网 {region}' for role in roles],
+            f'{year} 校园招聘 {roles[0]} site:edu.cn {region}',
             f'{year} 量子 招聘 site:mp.weixin.qq.com {region}',
-            f'{year} 校园招聘 {focus} site:zhipin.com {region}',
+            f'{year} 校园招聘 {roles[-1]} site:zhipin.com {region}',
             f'{year} 校园招聘 技术支持 site:liepin.com {region}',
             f'{year} 校园招聘 数据运营 site:51job.com {region}']
 

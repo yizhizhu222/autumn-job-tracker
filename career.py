@@ -72,8 +72,8 @@ def job_analysis(job, known, projected=()):
             'basis':'根据JD技能关键词与简历原文交叉核对；提及技能不等于熟练，也不是录用概率'}
 
 ROLE_FAMILIES={
- 'data':r'数据分析|数据运营|业务分析|经营分析|商业分析|统计',
- 'support':r'支持|实施|售前|客户成功|项目管理|应用工程|技术培训',
+ 'data':r'数据分析|数据运营|业务分析|经营分析|商业分析|统计|产品运营|增长运营',
+ 'support':r'支持|实施|交付|顾问|售前|客户成功|项目管理|应用工程|技术培训',
  'quality':r'测试|质量|QA|产品助理',
  'quantum':r'量子|quantum',
  'embedded':r'嵌入式|固件|设备|硬件|单片机'}
@@ -100,7 +100,8 @@ def build_plan(major, profile, jobs):
             matched_skills=set(a['evidence'])&set(p['skills'])
             # Generic communication/document mentions alone cannot justify a project.
             if len(matched_skills)<2 or not matched_skills-{'沟通','文档','项目管理'}:continue
-            if a['hard_conditions'] or not a['gained']:rejected+=1;continue
+            if a['hard_conditions']:rejected+=1;continue
+            a['reinforced']=[k for k in matched_skills if k in known]
             a['project_skill_evidence']={k:a['evidence'][k] for k in matched_skills}
             linked.append(a)
         if not linked:continue
@@ -108,19 +109,37 @@ def build_plan(major, profile, jobs):
         relevant=any(m in major for m in p['majors'])
         companies=len({j['company'] for j in linked})
         missing=set().union(*(set(j['gained']) for j in linked))
+        strengthened=set().union(*(set(j['reinforced']) for j in linked))
+        targets=missing or strengthened
         p.update(covered_jobs=len(linked),covered_companies=companies,sample_size=len(jobs),jobs_after=linked[:8],
-            direction=' / '.join(p['roles'][:2]),target_gap='、'.join(sorted(missing)),
-            selection_reason=f'目标方向有{len(linked)}条具体JD、{companies}家公司；项目用来补充'+ '、'.join(sorted(missing))+'的可展示证据。',
+            direction=' / '.join(p['roles'][:2]),target_gap='、'.join(sorted(targets)),
+            evidence_level='岗位需求支持',
+            selection_reason=f'目标方向有{len(linked)}条具体JD、{companies}家公司；'+('补充尚未展示的' if missing else '把已有技能变成可复现成果，强化')+ '、'.join(sorted(targets))+'证据。',
             score=companies*10+len(linked)*3+len(missing)+(2 if relevant else 0)+(3 if p['id'] in ('support','quality','data') else 0),
             status='planned',completion_evidence='',resume_outline=RESUME_OUTLINES[p['id']],
             resume_heading=p['title']+'｜个人项目｜【实际起止时间】',
             next_step='先对照下方JD确认目标方向，完成交付物与验收后，在原简历项目经历中加入或替换一项，控制在3条以内。',
-            demand_map=[{'skill':skill,'jobs':sum(skill in j['project_skill_evidence'] for j in linked),'evidence':next(j['project_skill_evidence'][skill] for j in linked if skill in j['project_skill_evidence'])} for skill in sorted(missing)])
+            demand_map=[{'skill':skill,'jobs':sum(skill in j['project_skill_evidence'] for j in linked),'evidence':next(j['project_skill_evidence'][skill] for j in linked if skill in j['project_skill_evidence'])} for skill in sorted(targets)])
         projects.append(p)
     projects.sort(key=lambda p:-p['score'])
-    return {'schema':2,'major':major,'generated_at':datetime.now().isoformat(),'profile_hash':hashlib.sha256(profile.encode()).hexdigest(),
+    # A temporarily empty daily feed must not erase a useful learning plan.
+    # Keep professional preparation explicitly separate from measured job coverage.
+    for template in PROJECTS:
+        if len(projects)>=3:break
+        if any(p['id']==template['id'] for p in projects):continue
+        if not any(m in major for m in template['majors']):continue
+        p=copy.deepcopy(template)
+        p.update(covered_jobs=0,covered_companies=0,sample_size=len(jobs),jobs_after=[],
+            direction=' / '.join(p['roles'][:2]),target_gap='、'.join(p['skills']),score=0,
+            evidence_level='专业准备方案 · 等待岗位验证',
+            selection_reason='按专业提供可执行的准备方案，目前没有足够可用JD计算覆盖数量。先完成第一周的小样本验证，补齐岗位需求后再决定是否投入完整项目。',
+            status='planned',completion_evidence='',resume_outline=RESUME_OUTLINES[p['id']],
+            resume_heading=p['title']+'｜个人项目｜【实际起止时间】',demand_map=[],
+            next_step='可从现有课程或个人项目继续完善。先交付小样本与复现说明；只有完成验收的成果才能写进简历，项目不替代学历和经验要求。')
+        projects.append(p)
+    return {'schema':3,'major':major,'generated_at':datetime.now().isoformat(),'profile_hash':hashlib.sha256(profile.encode()).hexdigest(),
       'summary':'先选择有真实需求、硬条件可争取的方向，再做能补齐证据的项目。',
       'evidence':ev,'warnings':['未提及的技能视为缺少简历证据，不断言你不会。','项目优先级依据当前JD数量、技能缺口与硬条件；没有录用结果数据，不能计算上岸率。','模板中的【占位内容】必须用实际成果替换，未完成的项目不能写成经历。'],
       'current_jobs':analyses[:12],'sample_size':len(jobs),'projects':projects[:3],
-      'project_message':'' if projects else '当前没有足够的适合JD来支持新项目：可能是需求不明确、硬门槛不符，或已有技能已覆盖。先补具体岗位和已有成果证据，不推荐零覆盖项目。',
+      'project_message':'' if projects else '请填写具体专业，系统会据此准备项目步骤，并在收集到岗位后补充需求依据。',
       'ai':None,'ai_status':'基础分析已完成，未调用模型'}

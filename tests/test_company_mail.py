@@ -37,23 +37,24 @@ class CompanyTests(unittest.TestCase):
         self.assertFalse(same_company({'company':'量子甲'},{'company':'量子甲分公司'}))
         self.assertFalse(same_company({'company':'量子甲'},{'company':'量子乙'}))
         self.assertTrue(same_company({'company':'甲','company_aliases':['乙']},{'company':'乙有限公司'}))
-    def test_fixed_batch_does_not_replace_handled_company(self):
+    def test_underfilled_batch_keeps_handled_company_and_adds_new_company(self):
         a=self.add('已投公司','数据分析')
         self.engine.daily_view()
         self.add('新公司','数据分析');self.add('新公司','数据运营')
         self.store.change({'op':'mark','key':a['key'],'evidence':'已提交'})
         report=self.engine.status()['report']
-        self.assertEqual(report['companies'],[])
-        self.assertTrue(report['daily']['complete'])
+        self.assertEqual([g['company'] for g in report['companies']],['新公司'])
+        self.assertEqual(report['daily']['handled'],1)
+        self.assertFalse(report['daily']['complete'])
     def test_project_needs_relevant_real_jd_not_just_major(self):
-        self.assertEqual(career.build_plan('数据科学','',[])['projects'],[])
-        job=self.add('Example','电话销售');self.assertEqual(career.build_plan('数据科学','',[job])['projects'],[])
+        self.assertTrue(all(p['covered_jobs']==0 for p in career.build_plan('数据科学','',[])['projects']))
+        job=self.add('Example','电话销售');self.assertTrue(all(p['covered_jobs']==0 for p in career.build_plan('数据科学','',[job])['projects']))
         job['role']='数据分析师';plan=career.build_plan('数据科学','',[job])
         self.assertTrue(plan['projects'])
-        for p in plan['projects']:
+        for p in [p for p in plan['projects'] if p['covered_jobs']]:
             self.assertGreater(p['covered_jobs'],0);self.assertTrue(p['demand_map']);self.assertTrue(p['resume_outline'])
             self.assertTrue(all('【' in line for line in p['resume_outline']))
-        job['requirements']=['沟通能力，工作认真'];self.assertEqual(career.build_plan('数据科学','',[job])['projects'],[])
+        job['requirements']=['沟通能力，工作认真'];self.assertTrue(all(p['covered_jobs']==0 for p in career.build_plan('数据科学','',[job])['projects']))
 
 class FakeIMAP:
     def __init__(self):self.selections=[];self.calls=[]

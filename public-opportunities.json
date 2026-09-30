@@ -1,0 +1,174 @@
+{
+  "checked_on": "2026-09-30",
+  "note": "公开招聘信息摘要，不含用户资料。线上面试和固定薪资未确认时保留提示；申请前核对原网页。",
+  "jobs": [
+    {
+      "key": "campus-2027-fanruan-9870",
+      "company": "帆软",
+      "role": "产品运营（2027校招）",
+      "group": "数据与运营",
+      "source": "https://join.fanruan.com/campus/detail?id=9870",
+      "apply_url": "https://join.fanruan.com/campus/detail?id=9870",
+      "direct": true,
+      "channel": "web",
+      "place": "南京 / 无锡",
+      "salary": "官网14–18K/月，固定与浮动部分待确认",
+      "eligibility": "2027届本科及以上，理工科；计算机和应用数学背景优先",
+      "duties": [
+        "分析产品使用数据和用户需求，制定运营指标并跟进产品功能推广。",
+        "通过数据分析、用户调研与跨团队协作支持产品改进和业务增长。"
+      ],
+      "requirements": [
+        "2027届本科及以上理工科，计算机或应用数学学习背景优先。",
+        "需要数据统计、逻辑分析和用户服务意识；ToB软件运营或产品相关实习优先。"
+      ],
+      "source_proof": {
+        "kind": "official",
+        "url": "https://join.fanruan.com/campus/detail?id=9870",
+        "basis": "帆软官方校招具体岗位页，展示岗位编号、薪酬、职责和2027届要求",
+        "checked_on": "2026-09-30"
+      }
+    },
+    {
+      "key": "campus-2027-hand-contract",
+      "company": "汉得信息",
+      "role": "数智化咨询顾问-合同交付方向",
+      "group": "实施与技术支持",
+      "source": "https://career.hebut.edu.cn/home/correcruit/content/id/76829.html",
+      "apply_url": "https://career.hebut.edu.cn/home/correcruit/content/id/76829.html",
+      "direct": false,
+      "channel": "web",
+      "place": "天津 / 河北 / 湖北 / 四川 / 陕西，需出差",
+      "salary": "高校岗位页8000–10000元，具体固定月薪待确认",
+      "eligibility": "2027届本科及以上；计算机、软件、信息管理等相关专业优先",
+      "duties": [
+        "参与合同管理系统的配置、数据清洗导入、系统测试、用户培训与上线运维。",
+        "排查系统和数据问题，整理交付文档及项目知识库，需要长短期出差。"
+      ],
+      "requirements": [
+        "2027届本科及以上，计算机、软件工程、信息管理等相关专业优先。",
+        "有数据库或信息系统项目基础加分，需要清晰沟通、学习能力与客户服务意识。"
+      ],
+      "notes": "此按钮直达具体高校岗位说明；页面底部可投简历，可能要求高校平台账号。企业官方校招入口为http://career.hand-china.com，若外校登录受限可使用官方渠道；线上面试未确认。",
+      "official_entry": "http://career.hand-china.com",
+      "source_proof": {
+        "kind": "university",
+        "url": "https://career.hebut.edu.cn/home/correcruit/content/id/76829.html",
+        "basis": "河北工业大学就业网独立岗位页，列出2027届、本科、职责和薪酬",
+        "checked_on": "2026-09-30"
+      }
+    },
+    {
+      "key": "campus-baidu-J100697",
+      "company": "百度",
+      "role": "北京-数据分析师（J100697）",
+      "group": "数据分析",
+      "source": "https://talent.baidu.com/jobs/detail/GRADUATE/b9915b1e-791b-4278-a58f-0078543edb41",
+      "apply_url": "https://talent.baidu.com/jobs/detail/GRADUATE/b9915b1e-791b-4278-a58f-0078543edb41",
+      "direct": true,
+      "channel": "web",
+      "place": "北京",
+      "salary": "岗位页未公开，固定月薪待确认",
+      "eligibility": "本科及以上校招；页面未写明毕业年份，2027届资格待确认",
+      "duties": [
+        "分析产品和用户行为，建立数据指标、输出报告并支持业务增长。",
+        "参与A/B实验设计和结果解释，尝试AI工具辅助分析。"
+      ],
+      "requirements": [
+        "本科及以上，统计、数学或计算机等专业优先；熟练SQL。",
+        "Python或R分析经验、可视化工具和互联网数据分析实习优先。"
+      ],
+      "source_proof": {
+        "kind": "official",
+        "url": "https://talent.baidu.com/jobs/detail/GRADUATE/b9915b1e-791b-4278-a58f-0078543edb41",
+        "basis": "百度官方校招具体岗位页，标注本科、岗位编号与申请操作；毕业年份没有明确写出",
+        "checked_on": "2026-09-30"
+      }
+    },
+    {
+      "key": "campus-2027-startimes-38",
+      "company": "四达时代",
+      "role": "软件测试工程师（北京，00038）",
+      "group": "测试与质量",
+      "source": "https://jobs-startimes.ourats.com/req/details/?id=38&tag=campus",
+      "apply_url": "https://jobs-startimes.ourats.com/req/details/?id=38&tag=campus",
+      "direct": true,
+      "channel": "web",
+      "place": "北京（此岗位不是非洲外派岗）",
+      "salary": "高校校招简章10000–15000元，单岗固定月薪待确认",
+      "eligibility": "2027届本科及以上，计算机相关专业",
+      "duties": [
+        "参与产品测试与测试工具开发，协同研发、产品和运营团队保障质量。",
+        "追踪线上线下故障，改进问题发现与质量保障流程。"
+      ],
+      "requirements": [
+        "本科及以上计算机相关专业，2027届校招；掌握至少一门Python、C++、Java等语言。",
+        "有数据结构基础、产品意识和问题定位能力；自动化或性能测试工具经验优先。"
+      ],
+      "source_proof": {
+        "kind": "official",
+        "url": "https://career.nankai.edu.cn/correcruit/content/id/118402.html",
+        "basis": "南开大学2027招聘简章链接企业OurATS校招网站；网站列表有软件测试00038及具体岗位页",
+        "checked_on": "2026-09-30"
+      }
+    },
+    {
+      "key": "campus-2027-dexmal-A54426",
+      "company": "原力灵机",
+      "role": "测试工程师（A54426，27届）",
+      "group": "测试与质量",
+      "source": "https://www.nowcoder.com/jobs/detail/460908",
+      "apply_url": "https://www.nowcoder.com/jobs/detail/460908",
+      "direct": true,
+      "channel": "web",
+      "platform": "牛客",
+      "place": "北京",
+      "salary": "面议，固定月薪待确认",
+      "deadline": "2026-12-31",
+      "eligibility": "2027届本科及以上，计算机等相关专业，硕士优先并非必需",
+      "duties": [
+        "在导师指导下制定机器人测试计划和用例，采集分析测试数据并整理报告。",
+        "复现和追踪缺陷，参与性能对比及自动化测试工具维护。"
+      ],
+      "requirements": [
+        "2027届本科及以上，计算机、自动化、电子等专业；硕士优先。",
+        "需要统计与数据分析、沟通和文档能力；Python、C/C++或MATLAB至少一种，Linux、测试流程与相关项目经验加分。"
+      ],
+      "source_proof": {
+        "kind": "platform",
+        "url": "https://myjob.dlmu.edu.cn/campus/view/id/868442",
+        "basis": "牛客具体岗位页展示公司HR与2027测试JD；大连海事大学校招公告交叉确认公司、测试质量方向及正式入职流程，单岗细节以牛客页为据",
+        "checked_on": "2026-09-30"
+      }
+    },
+    {
+      "key": "campus-2027-sangfor-presales",
+      "company": "深信服",
+      "role": "27届售前产品经理",
+      "group": "售前与技术支持",
+      "source": "https://jobs.tiangong.edu.cn/correcruit/content/id/56343.html",
+      "apply_url": "https://jobs.tiangong.edu.cn/correcruit/content/id/56343.html",
+      "direct": false,
+      "channel": "web",
+      "place": "广东 / 全国业务区域，具体安排待确认",
+      "salary": "天津工业大学岗位页10000元以上，固定与浮动部分待确认",
+      "eligibility": "2027届本科，具体毕业区间和工作区域以招聘方为准",
+      "duties": [
+        "围绕网络安全、云计算与基础架构需求提供售前支持及解决方案。",
+        "与客户沟通需求、交流方案，协调销售、研发和交付工作。"
+      ],
+      "requirements": [
+        "2027届本科，限理工科相关专业。",
+        "需要沟通、主动学习、独立思考和逻辑分析能力；线上面试方式尚需确认。"
+      ],
+      "notes": "打开即为27届售前产品经理的具体说明；企业官网https://hr.sangfor.com/提供校招申请，可能需要登录选择区域。岗位涉及商务与销售协作。",
+      "official_entry": "https://hr.sangfor.com/",
+      "source_proof": {
+        "kind": "university",
+        "url": "https://jobs.tiangong.edu.cn/correcruit/content/id/56343.html",
+        "basis": "天津工业大学具体27届岗位页；广东工业大学2027校招公告交叉确认企业官网入口和售前方向",
+        "checked_on": "2026-09-30"
+      }
+    }
+  ]
+}

@@ -15,7 +15,7 @@ def build():
     output=ROOT/'build'/'portable'
     subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onedir','--name','AutumnJobTracker',
         '--distpath',str(output),'--workpath',str(ROOT/'build'/'pyinstaller'), '--specpath',str(ROOT/'build'),
-        '--add-data',str(ROOT/'web')+os.pathsep+'web','--collect-all','pypdf',
+        '--add-data',str(ROOT/'web')+os.pathsep+'web','--add-data',str(ROOT/'public-opportunities.json')+os.pathsep+'.','--collect-all','pypdf',
         '--exclude-module','pymupdf','--exclude-module','fitz',str(ROOT/'launcher.py')],check=True,cwd=ROOT)
     folder=output/'AutumnJobTracker'
     subprocess.run([str(folder/'AutumnJobTracker.exe'),'--self-test'],check=True)

@@ -26,7 +26,7 @@ from application_feedback import Feedback
 
 BASE = Path(__file__).resolve().parent
 INSTALL = Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else BASE
-VERSION = '1.7.1'
+VERSION = '1.8.0'
 TZ = timezone(timedelta(hours=8))
 PROGRESS = ('等待回复', '自动回执', '补材料', '测评邀请', '面试邀请', '面试中', '录用', '拒绝', '撤回')
 CATALOG = '岗位库.json'

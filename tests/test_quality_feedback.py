@@ -40,9 +40,9 @@ class QualityFeedbackTests(unittest.TestCase):
                         {'verified_on':'2026-08-01'},{'deadline':'2026-09-01'}):
             q=assess(dict(j,**changes),profile,self.day,True)
             self.assertFalse(q['ready']);self.assertFalse(q['recommended'])
-        self.assertFalse(assess(j,'',self.day,True)['recommended'])
+        self.assertTrue(assess(j,'',self.day,True)['recommended'])
         self.assertFalse(assess(j,profile,self.day,False)['ready'])
-        self.assertFalse(assess(dict(j,online_confirmed=False),profile,self.day,True)['ready'])
+        self.assertTrue(assess(dict(j,online_confirmed=False),profile,self.day,True)['ready'])
     def test_source_domains_and_platform_corroboration(self):
         j=self.add();j['source']='https://www.zhipin.com/job_detail/x.html'
         self.assertFalse(source_info(j)['verified'])

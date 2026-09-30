@@ -58,8 +58,8 @@ class DailyTests(unittest.TestCase):
         self.assertEqual(len(self.engine.visible_jobs()),1)
         self.add('后来加入的公司')
         self.engine.daily_queue.change({'op':'undo_seen', 'key':target['key']})
-        self.assertEqual(len(self.engine.visible_jobs()),3)
-        self.assertEqual(self.engine.daily_view()['allocated'],3)
+        self.assertEqual(len(self.engine.visible_jobs()),4)
+        self.assertEqual(self.engine.daily_view()['allocated'],4)
 
     def test_applied_company_never_qualifies_for_repeat(self):
         a=self.add('甲');self.add('甲','运营');self.add('乙')
@@ -98,10 +98,11 @@ class DailyTests(unittest.TestCase):
         self.store.write('recommendation-history.json',{'2026-09-28':{'keys':[a['key']]}})
         self.store.write(recommendations.DAILY,{'date':self.day.isoformat(),'items':[b]})
         self.store.change({'op':'mark','key':b['key'],'evidence':'已提交'})
-        self.assertTrue(self.engine.daily_view()['complete'])
-        self.assertEqual(self.engine.daily_view()['allocated'],1)
-        self.day+=timedelta(days=1)
+        self.assertFalse(self.engine.daily_view()['complete'])
+        self.assertEqual(self.engine.daily_view()['allocated'],2)
         self.assertEqual([j['key'] for j in self.engine.visible_jobs()],[c['key']])
+        self.day+=timedelta(days=1)
+        self.assertEqual(self.engine.visible_jobs(),[])
 
     def test_filter_does_not_reset_batch_or_claim_done_and_unknown_key_rejected(self):
         a=self.add('甲');self.engine.daily_view()
@@ -124,9 +125,9 @@ class DailyTests(unittest.TestCase):
         self.store.write('recommendation-history.json',{'2026-09-28':{'keys':[a['key']]}})
         self.store.write(recommendations.DAILY,{'date':self.day.isoformat(),'items':[a]})
         result=self.engine.daily_view()
-        self.assertEqual(result['allocated'],1)
-        self.assertEqual(result['items'],[])
-        self.assertTrue(result['complete'])
+        self.assertEqual(result['allocated'],2)
+        self.assertEqual([j['company'] for j in result['items']],['以后再看的公司'])
+        self.assertFalse(result['complete'])
 
 
 if __name__=='__main__': unittest.main()

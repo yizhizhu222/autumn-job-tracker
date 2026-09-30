@@ -66,7 +66,8 @@ class FeatureTests(unittest.TestCase):
     def test_project_does_not_erase_degree_requirement(self):
         j=self.add();j['requirements']=['硕士及以上，SQL、数据分析']
         plan=career.build_plan('数据科学','Python项目经历',[j])
-        self.assertEqual(plan['projects'],[])
+        self.assertTrue(plan['projects'])
+        self.assertTrue(all(p['covered_jobs']==0 and not p['jobs_after'] for p in plan['projects']))
         self.assertTrue(plan['current_jobs'][0]['hard_conditions'])
     def test_career_completion_requires_proof_and_never_mutates_resume(self):
         plan=career.build_plan('数据科学','',[self.add()]);self.store.write(career.FILE,plan)

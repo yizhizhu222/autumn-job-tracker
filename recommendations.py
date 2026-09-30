@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import socket
 import threading
-from datetime import datetime
+from datetime import datetime, date as calendar_date
 from urllib.parse import urlparse, urlencode, parse_qs, urljoin
 from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHandler
 from urllib.error import URLError
@@ -32,6 +32,14 @@ DRAFTS = 'resume-drafts.json'
 DEFAULTS = {'enabled': True, 'hour': 9, 'target': 10, 'model': 'qwen3:4b',
     'profile': '', 'resume_path': '', 'search_enabled': True,
     'preferences': '2027届本科秋招；城市不限；只接受线上面试；量子行业优先且薪资可适当放宽；其他岗位月薪4000元以上；优先少编程、技术支持、实施、测试、数据运营及辅助岗位。'}
+
+def public_opportunities(on):
+    path=Path(__file__).parent/'public-opportunities.json'
+    if not path.exists():return []
+    data=json.loads(path.read_text(encoding='utf-8'))
+    if not 0<=(on-calendar_date.fromisoformat(data['checked_on'])).days<=14:return []
+    return [dict(j,verified_on=data['checked_on'],online='线上面试待确认',online_confirmed=False,
+                 salary_min_confirmed=False,status='待申请',aliases=[j['key']]) for j in data['jobs']]
 
 
 def public_url(url):
@@ -288,12 +296,24 @@ class Assistant:
 
     def career_status(self):
         plan = self.read(career.FILE, None)
+        if not plan or plan.get('schema',1)<3 or not plan.get('projects'):
+            with self.store.lock:
+                old=plan or {};s=self.settings()
+                major=old.get('major') or ('数据科学与大数据技术' if '数据科学' in s['profile'] else '计算机与信息技术' if re.search(r'计算机|软件|Python|API',s['profile']) else '')
+                if major:
+                    jobs=[j for j in self.store.read('岗位库.json')['jobs'] if self.preferences.allowed(j)]
+                    plan=career.build_plan(major,s['profile'],jobs)
+                    for project in plan['projects']:
+                        previous=next((p for p in old.get('projects',[]) if p['id']==project['id']),{})
+                        if old.get('profile_hash')==plan['profile_hash']:
+                            for field in ('status','completion_evidence'):project[field]=previous.get(field,project[field])
+                    self.store.write(career.FILE,plan)
         if plan:
-            if plan.get('schema',1)<2:plan['ai']=None
-            plan['current_jobs'] = self.visible_jobs(plan['current_jobs'])
-            for p in plan['projects']: p['jobs_after'] = self.visible_jobs(p['jobs_after'])
-            plan['projects']=[p for p in plan['projects'] if p.get('jobs_after') and p.get('resume_outline')]
-            if not plan['projects']:plan['project_message']='当前没有足够的可投JD支撑项目建议。先补充目标方向的具体岗位，再决定项目；不推荐零岗位覆盖的项目。'
+            seen=self.daily_queue.read()['days'].get(self.today().isoformat(),{}).get('seen',[])
+            def visible(jobs):return [j for j in self.pending_jobs(jobs) if not any(same_company(j,x) for x in seen)]
+            plan['current_jobs'] = visible(plan['current_jobs'])
+            for p in plan['projects']:p['jobs_after'] = visible(p['jobs_after'])
+            # Project steps and progress survive applied/seen company filtering.
         with self.state_lock: progress = dict(self.career_progress)
         return {'plan': plan, 'progress': progress}
 
@@ -305,7 +325,7 @@ class Assistant:
             s=self.settings()
             profile=clipped(data.get('profile',s['profile']),24000)
             with self.store.lock:
-                jobs=self.pending_jobs()
+                jobs=[j for j in self.store.read('岗位库.json')['jobs'] if self.preferences.allowed(j)]
                 plan=career.build_plan(major,profile,jobs)
                 old=self.read(career.FILE,{})
                 if old:
@@ -360,8 +380,12 @@ class Assistant:
 
     def start(self, force=False):
         if not self.busy.acquire(blocking=False): return {'started': False, 'message': '推荐正在生成'}
-        if not force and self.read(DAILY, {}).get('date') == self.today().isoformat():
-            self.busy.release(); return {'started': False, 'message': '今日已生成'}
+        report=self.read(DAILY,{})
+        if not force and report.get('date')==self.today().isoformat():
+            shortage=self.daily_view()['shortfall']
+            last=report.get('attempt_epoch',0)
+            if not shortage or time.time()-last<1800:
+                self.busy.release(); return {'started':False,'message':'今日清单已准备' if not shortage else '不足6个，稍后自动继续补充'}
         with self.state_lock: self.progress = {'running': True, 'message': '准备推荐'}
         threading.Thread(target=self.run, daemon=True).start()
         return {'started': True}
@@ -381,6 +405,17 @@ class Assistant:
         started=time.monotonic()
         try:
             s = self.settings(); date = self.today().isoformat()
+            # A reviewed public pool is available even when a search engine/model is down.
+            # Never copy personal resumes into it or overwrite user's application history.
+            if '2027' in s['preferences'] and s['profile'].strip():
+                with self.store.lock:
+                    saved=self.store.read('岗位库.json');added=False
+                    for job in public_opportunities(self.today()):
+                        if any(self.same_job(job,j) for j in saved['jobs']):continue
+                        job['resume']={'path':s['resume_path'],'base':'已导入简历','before':'','after':''}
+                        job.update(base='已导入简历',change_note='保留原简历；暂无自动修改。',match='待评估',strengths=[],gaps=['线上面试及固定薪资尚待确认'],confidence='公开岗位摘要与简历原文对照',entry=job['source'],action_label='查看具体岗位')
+                        saved['jobs'].append(job);added=True
+                    if added:self.store.write('岗位库.json',saved)
             self.daily_view()  # Freeze the batch before any background report update.
             prefs = self.preferences.read()
             catalog = self.store.read('岗位库.json')
@@ -422,7 +457,8 @@ class Assistant:
                 if not found: errors.append('公开搜索未返回可核实岗位，继续核对已有企业招聘页面')
                 # Also revisit known recruitment sources; search outages do not erase the company pool.
                 for old in candidates:
-                    if old.get('source'): found.setdefault(old['source'],{'title':old['company'],'url':old['source'],'snippet':''})
+                    if any(same_company(old,a) for a in applied_now) or self.preferences.excluded(old):continue
+                    if old.get('source'): found.setdefault(old['source'],{'title':old['company'],'company':old['company'],'url':old['source'],'snippet':'','source_proof':old.get('source_proof')})
                 crawl=diverse_hits(list(found.values()))
                 for index, hit in enumerate(crawl):
                     if self.stop.is_set() or time.monotonic()-started>420:
@@ -552,9 +588,9 @@ class Assistant:
                             a=analyses[j['key']]; j.update(match=clipped(a.get('match'),60),strengths=strings(a.get('strengths')),gaps=strings(a.get('gaps')),resume_reason=clipped(a.get('resume_reason')),confidence='本地AI推断 · 请结合原JD核对')
                 except (OSError,ValueError,KeyError,TypeError): errors.append('AI匹配分析失败，保留原有分析和待确认项')
             elif not s['profile']: errors.append('请在AI设置中导入简历正文，才能进行个人匹配分析')
-            report={'date':date,'generated_at':datetime.now().isoformat(),'items':selected,'new_count':added_count,
+            report={'date':date,'generated_at':datetime.now().isoformat(),'attempt_epoch':time.time(),'items':selected,'new_count':added_count,
                 'target':s['target'],'errors':list(dict.fromkeys(errors)),
-                'message':f'今日清单剩余 {len(selected)} 个岗位；本次新收集 {added_count} 条，按质量与固定清单规则安排。' + (' 本栏缺额保留，不用低质量线索补齐。' if len(selected)<s['target'] else ''),
+                'message':f'今日清单剩余 {len(selected)} 个岗位；本次新收集 {added_count} 条。条件未知会注明，技能缺口可通过项目准备。',
                 'empty_reason':'现有候选均已投或未核实到具体岗位，请稍后重试联网更新；不会生成虚构岗位。' if not selected else ''}
             with self.store.lock:
                 current=self.store.read('岗位库.json')
@@ -573,6 +609,10 @@ class Assistant:
             self.note('今日推荐已更新')
         except Exception:
             self.note('推荐未完成；已有推荐仍保留，请检查设置后重试')
+            with self.store.lock:
+                report=self.read(DAILY,{})
+                report.update(date=self.today().isoformat(),attempt_epoch=time.time())
+                self.store.write(DAILY,report)
         finally:
             with self.state_lock: self.progress['running']=False
             self.busy.release()

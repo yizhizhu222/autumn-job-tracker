@@ -8,6 +8,7 @@ from companies import same_company, group_companies
 
 FILE = 'daily-queue.json'
 LIMIT = 10
+MINIMUM = 6
 REST_MESSAGE = '今天已经努力得够多了，休息一下，去做点让自己开心的事吧。结果不全由我们掌控，但今天能做的，我们已经认真做了。'
 
 
@@ -54,9 +55,10 @@ class DailyQueue:
             day = self.today().isoformat()
             batch = state['days'].setdefault(day, {'entries': [], 'seen': []})
             prior = [(d, j) for d, b in state['days'].items() if d < day for j in b['entries']]
-            if not batch['entries']:
+            if len(batch['entries']) < MINIMUM:
                 candidates = []
                 for job in jobs:
+                    if any(same_company(job,j) for j in batch['entries'] + applied + batch['seen']) or excluded(job): continue
                     previous = [(d, j) for d, j in prior if same_company(job, j)]
                     reason = ''
                     if previous:
@@ -65,12 +67,14 @@ class DailyQueue:
                         recent_same = any(self.same_job(job, j) and (self.today() - date.fromisoformat(d)).days < 7 for d, j in previous)
                         if not reason or recent_same: continue
                     candidates.append(dict(job, repeat_reason=reason))
-                selected = []
+                selected = copy.deepcopy(batch['entries'])
+                target = LIMIT if not selected else MINIMUM
                 for lane in ('ready','recommend'):
                     lane_jobs=[]
+                    capacity = max(0,5-sum(j.get('daily_lane')=='ready' for j in selected)) if lane=='ready' else target-len(selected)
                     for maximum in (1,2):
                         for job in candidates:
-                            if len(lane_jobs)>=5: break
+                            if len(lane_jobs)>=capacity or len(selected)+len(lane_jobs)>=target: break
                             quality=job.get('quality',{})
                             if not quality.get('ready' if lane=='ready' else 'recommended'): continue
                             if any(same_company(job,j) for j in selected): continue
@@ -107,9 +111,10 @@ class DailyQueue:
                         items.append(dict(current, repeat_reason=entry.get('repeat_reason', ''),daily_lane=lane))
             if state != before or not (self.store.root / FILE).exists(): self.store.write(FILE, state)
             return {'date': day, 'limit': LIMIT, 'allocated': len(batch['entries']), 'handled': handled,
-                    'remaining': len(items), 'complete': bool(batch['entries']) and handled == len(batch['entries']),
+                    'remaining': len(items), 'minimum':MINIMUM,'shortfall':max(0,MINIMUM-len(batch['entries'])),
+                    'complete': len(batch['entries'])>=MINIMUM and handled == len(batch['entries']),
                     'items': items, 'companies': group_companies(items), 'rest_message': REST_MESSAGE,
-                    'lanes': {lane:{'limit':5,'allocated':sum(j.get('daily_lane')==lane for j in batch['entries']),'remaining':sum(j.get('daily_lane')==lane for j in items)} for lane in ('ready','recommend')},
+                    'lanes': {lane:{'limit':5 if lane=='ready' else LIMIT-sum(j.get('daily_lane')=='ready' for j in batch['entries']),'allocated':sum(j.get('daily_lane')==lane for j in batch['entries']),'remaining':sum(j.get('daily_lane')==lane for j in items)} for lane in ('ready','recommend')},
                     'quality_held':sum(not j.get('quality',{}).get('recommended') and not j.get('quality',{}).get('ready') for j in jobs),
                     'seen_companies': [{'key': j['key'], 'company': j['company']} for j in batch['seen']]}
 
